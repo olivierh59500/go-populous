@@ -12,7 +12,7 @@ The project recreates the original isometric world view, terrain sculpting, popu
   <a href="screenshots/Populous%20remake%20go.webm">Watch the gameplay video</a>
 </video>
 
-[Watch the gameplay video](screenshots/Populous%20remake%20go.mp4)
+[Watch the gameplay video](screenshots/Populous%20remake%20go.webm)
 
 ### Screenshots
 
