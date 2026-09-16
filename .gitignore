@@ -20,12 +20,18 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
+# Previous code
+previous/
+
 # Go workspace file
 go.work
 go.work.sum
 
 # env file
 .env
+
+# .DS_Store
+.DS_Store
 
 # Editor/IDE
 # .idea/

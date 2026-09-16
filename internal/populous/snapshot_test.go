@@ -15,7 +15,7 @@ func TestWorldSnapshotRestoresDynamicState(t *testing.T) {
 		EnemyReactionSpeed: 5,
 	})
 	world.War = true
-	world.ScorePlayer = DevilPlayer
+	world.SetScorePlayer(DevilPlayer)
 	for i := 0; i < 3; i++ {
 		world.Tick()
 	}
@@ -44,5 +44,26 @@ func TestWorldSnapshotRestoresDynamicState(t *testing.T) {
 	}
 	if restored.ScorePlayer != DevilPlayer || restored.ComputerControlled != [2]bool{true, true} {
 		t.Fatalf("restored control state = score player %d computer %v", restored.ScorePlayer, restored.ComputerControlled)
+	}
+	if restored.Scores != snapshot.Scores || restored.Score != restored.Scores[DevilPlayer] {
+		t.Fatalf("restored scores = %v local=%d, want %v", restored.Scores, restored.Score, snapshot.Scores)
+	}
+}
+
+func TestWorldFromLegacySnapshotMigratesSelectedScore(t *testing.T) {
+	legacy := WorldSnapshot{
+		Level: Level{
+			PlayerPopulation: 2,
+			EnemyPopulation:  4,
+		},
+		Score:       1234,
+		ScorePlayer: DevilPlayer,
+	}
+	restored := WorldFromSnapshot(legacy, DefaultTerrainRules())
+	if restored.Scores[GodPlayer] != 2*ScorePeople {
+		t.Fatalf("migrated god score = %d", restored.Scores[GodPlayer])
+	}
+	if restored.Scores[DevilPlayer] != 1234 || restored.Score != 1234 {
+		t.Fatalf("migrated devil/local score = %d/%d", restored.Scores[DevilPlayer], restored.Score)
 	}
 }

@@ -16,6 +16,7 @@ type WorldSnapshot struct {
 	ComputerControlled [2]bool
 	BattleWon          [2]int
 	War                bool
+	Scores             [2]int
 	Score              int
 	ScorePlayer        int
 	RNG                uint16
@@ -25,6 +26,7 @@ func (w *World) Snapshot() WorldSnapshot {
 	if w == nil {
 		return WorldSnapshot{}
 	}
+	w.commitLocalScoreView()
 	snapshot := WorldSnapshot{
 		Level:              w.Level,
 		Terrain:            w.Terrain,
@@ -40,6 +42,7 @@ func (w *World) Snapshot() WorldSnapshot {
 		ComputerControlled: w.ComputerControlled,
 		BattleWon:          w.BattleWon,
 		War:                w.War,
+		Scores:             w.Scores,
 		Score:              w.Score,
 		ScorePlayer:        w.ScorePlayer,
 		RNG:                uint16(w.rng),
@@ -59,7 +62,7 @@ func WorldFromSnapshot(snapshot WorldSnapshot, rules TerrainRules) *World {
 	if terrain < 0 || terrain > 3 {
 		terrain = 0
 	}
-	return &World{
+	world := &World{
 		Level:              snapshot.Level,
 		Rules:              rules,
 		Terrain:            terrain,
@@ -76,8 +79,26 @@ func WorldFromSnapshot(snapshot WorldSnapshot, rules TerrainRules) *World {
 		ComputerControlled: snapshot.ComputerControlled,
 		BattleWon:          snapshot.BattleWon,
 		War:                snapshot.War,
+		Scores:             snapshot.Scores,
 		Score:              snapshot.Score,
 		ScorePlayer:        snapshot.ScorePlayer,
 		rng:                lcg(snapshot.RNG),
 	}
+	if world.ScorePlayer < GodPlayer || world.ScorePlayer > DevilPlayer {
+		world.ScorePlayer = GodPlayer
+	}
+	// Scores was added after the original save/snapshot format. A decoded old
+	// snapshot has a zero array, so recover its selected player's accumulated
+	// score and initialize the other side from the level.
+	legacyScores := world.Scores == [2]int{}
+	for player := range world.Scores {
+		if world.Scores[player] == 0 {
+			world.Scores[player] = world.initialScoreFor(player)
+		}
+	}
+	if legacyScores && snapshot.Score != 0 {
+		world.Scores[world.ScorePlayer] = snapshot.Score
+	}
+	world.Score = world.Scores[world.ScorePlayer]
+	return world
 }
