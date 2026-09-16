@@ -22,6 +22,8 @@ const (
 	miniMapHeight = 64
 	saveVersion   = 2
 	saveFileName  = "go-populous.sav"
+
+	temporaryViewTicks = 10
 )
 
 var manaGaugeValues = [...]int{
@@ -167,6 +169,7 @@ const (
 	ModeSculpt ActionMode = iota
 	ModeMagnet
 	ModeSwamp
+	ModeInspect
 )
 
 type Game struct {
@@ -208,6 +211,10 @@ type Game struct {
 	hoverOK            bool
 	viewFight          int
 	viewPeople         int
+	viewPeep           int
+	oldViewPeep        int
+	viewTimer          int
+	viewedCarrier      int
 	endLost            bool
 	endSummary         [2]populous.PlayerSummary
 	endScore           int
@@ -215,6 +222,7 @@ type Game struct {
 	tick               int
 	world              *populous.World
 	sound              *soundPlayer
+	network            *networkGame
 }
 
 func New(bundle *assets.Bundle) *Game {
@@ -224,6 +232,8 @@ func New(bundle *assets.Bundle) *Game {
 		player:             populous.GodPlayer,
 		computerControlled: [2]bool{false, true},
 		titleMenuCursor:    titleConquest,
+		viewPeep:           -1,
+		oldViewPeep:        -1,
 		sound:              newSoundPlayer(bundle.SoundBank),
 	}
 	for name, img := range bundle.Screens {
@@ -266,10 +276,17 @@ func (g *Game) Update() error {
 	case StateOptions:
 		g.handleOptionsInput()
 	case StateGame:
+		g.advanceViewedPeep()
 		if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+			if g.multiplayerEnabled() {
+				g.stopMultiplayer()
+				g.setLevel(g.levelIndex)
+				g.state = StateTitle
+				return nil
+			}
 			g.openSetup(StateGame)
 		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyH) {
+		if !g.multiplayerEnabled() && inpututil.IsKeyJustPressed(ebiten.KeyH) {
 			g.openHelp(StateGame)
 			return nil
 		}
@@ -288,10 +305,10 @@ func (g *Game) Update() error {
 		if g.humanControlsPlayer() && inpututil.IsKeyJustPressed(ebiten.KeyDigit3) {
 			g.setPlayerTendency(populous.FightMode)
 		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyRight) && len(g.bundle.Levels) > 0 {
+		if !g.multiplayerEnabled() && inpututil.IsKeyJustPressed(ebiten.KeyRight) && len(g.bundle.Levels) > 0 {
 			g.setLevel((g.levelIndex + 1) % len(g.bundle.Levels))
 		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyLeft) && len(g.bundle.Levels) > 0 {
+		if !g.multiplayerEnabled() && inpututil.IsKeyJustPressed(ebiten.KeyLeft) && len(g.bundle.Levels) > 0 {
 			next := g.levelIndex - 1
 			if next < 0 {
 				next = len(g.bundle.Levels) - 1
@@ -311,7 +328,7 @@ func (g *Game) Update() error {
 			g.yoff--
 		}
 		g.updateHoverTile()
-		if !g.handleIconInput() && !g.handleTargetPowerInput() && !g.handleMouseNavigation() {
+		if !g.handleIconInput() && !g.handleTargetPowerInput() && !g.handlePeepInspectionInput() && !g.handleMouseNavigation() {
 			g.handleSculptInput()
 		}
 		if g.tutorialPaused {
@@ -322,12 +339,22 @@ func (g *Game) Update() error {
 			return nil
 		}
 		if g.world != nil {
-			g.world.TickWithComputer(g.computerControlled)
+			advanced := g.advanceWorld()
 			g.updateHeartbeat()
-			g.drainWorldSounds()
-			g.updateEndState()
+			if advanced {
+				g.drainWorldSounds()
+				g.updateEndState()
+			}
 		}
 	case StateEnd:
+		if g.multiplayerEnabled() {
+			if inpututil.IsKeyJustPressed(ebiten.KeyEscape) || inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeySpace) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+				g.stopMultiplayer()
+				g.setLevel(g.levelIndex)
+				g.state = StateTitle
+			}
+			return nil
+		}
 		if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 			g.tutorialActive = false
 			g.tutorialPaused = false
@@ -463,6 +490,9 @@ func (g *Game) opponent() int {
 
 func (g *Game) humanControlsPlayer() bool {
 	if g.player < 0 || g.player >= len(g.computerControlled) {
+		return false
+	}
+	if g.multiplayerEnabled() && !g.multiplayerReady() {
 		return false
 	}
 	return !g.computerControlled[g.player]
@@ -620,6 +650,7 @@ func (g *Game) startTutorial() {
 	g.world.ComputerControlled = g.computerControlled
 	g.viewFight = 0
 	g.viewPeople = 0
+	g.resetViewedPeep()
 	g.endLost = false
 	g.endSummary = [2]populous.PlayerSummary{}
 	g.endScore = 0
@@ -796,6 +827,7 @@ func (g *Game) setPlayerSide(player int) {
 		g.world.SetScorePlayer(g.player)
 		g.world.ComputerControlled = g.computerControlled
 	}
+	g.resetViewedPeep()
 	g.centerOnPlayerLeader()
 }
 
@@ -864,6 +896,7 @@ func (g *Game) loadGameState() error {
 	g.clampView()
 	g.viewFight = 0
 	g.viewPeople = 0
+	g.resetViewedPeep()
 	g.endLost = false
 	g.endSummary = [2]populous.PlayerSummary{}
 	g.endScore = 0
@@ -1030,27 +1063,24 @@ func setBuildMode(level *populous.Level, index int) {
 
 func (g *Game) toggleMagnetMode() {
 	if g.mode == ModeMagnet {
-		g.mode = ModeSculpt
-		if g.world != nil {
-			g.world.SetMagnetMode(g.player, populous.SettleMode)
-		}
+		g.setActionMode(ModeSculpt)
+		g.issueCommand(populous.Command{Kind: populous.CommandSetTendency, Player: g.player, Value: populous.SettleMode})
 		return
 	}
-	g.mode = ModeMagnet
-	if g.world != nil {
-		g.world.SetMagnetMode(g.player, populous.MagnetMode)
-	}
+	g.setActionMode(ModeMagnet)
+	g.issueCommand(populous.Command{Kind: populous.CommandSetTendency, Player: g.player, Value: populous.MagnetMode})
 }
 
 func (g *Game) setActionMode(mode ActionMode) {
 	g.mode = mode
+	if g.network != nil {
+		g.network.modeGeneration++
+	}
 }
 
 func (g *Game) setPlayerTendency(tendency int) {
-	g.mode = ModeSculpt
-	if g.world != nil {
-		g.world.SetMagnetMode(g.player, tendency)
-	}
+	g.setActionMode(ModeSculpt)
+	g.issueCommand(populous.Command{Kind: populous.CommandSetTendency, Player: g.player, Value: tendency})
 }
 
 func (g *Game) handleTargetPowerInput() bool {
@@ -1069,13 +1099,35 @@ func (g *Game) handleTargetPowerInput() bool {
 	return false
 }
 
+func (g *Game) handlePeepInspectionInput() bool {
+	if g.world == nil || g.atlasView || g.mode != ModeInspect {
+		return false
+	}
+	leftPressed := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
+	rightPressed := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
+	if !leftPressed && !rightPressed {
+		return false
+	}
+	mouseX, mouseY := ebiten.CursorPosition()
+	index, ok := g.visiblePeepAt(mouseX, mouseY)
+	if !ok {
+		return false
+	}
+	if rightPressed {
+		g.setTemporaryViewedPeep(index)
+	} else {
+		g.setViewedPeep(index)
+	}
+	return true
+}
+
 func (g *Game) applyTargetPower(mapX, mapY int) {
 	switch g.mode {
 	case ModeMagnet:
-		g.world.SetMagnetToTile(g.player, mapX, mapY)
+		g.issueCommand(populous.Command{Kind: populous.CommandSetMagnet, Player: g.player, X: mapX, Y: mapY})
 	case ModeSwamp:
-		if g.world.SwampAtTile(g.player, mapX, mapY) {
-			g.mode = ModeSculpt
+		if g.issueCommand(populous.Command{Kind: populous.CommandSwamp, Player: g.player, X: mapX, Y: mapY}) && !g.multiplayerEnabled() {
+			g.setActionMode(ModeSculpt)
 		}
 	}
 }
@@ -1112,7 +1164,7 @@ func (g *Game) handleIconInput() bool {
 
 func (g *Game) handleDirectionIcon(iconX, iconY int) {
 	if iconX == 4 && iconY == 1 {
-		g.centerOnPlayerLeader()
+		g.centerOnViewedPeep()
 		return
 	}
 	dx := 0
@@ -1146,6 +1198,7 @@ func (g *Game) handleActionIcon(iconX, iconY int, rightButton bool) {
 		case iconX == 7 && iconY == 0:
 			if rightButton {
 				g.centerOnPlayerLeader()
+				g.viewPlayerLeaderTemporarily()
 			} else {
 				g.centerOnMapPos(g.world.Magnets[g.player].GoTo)
 			}
@@ -1159,20 +1212,20 @@ func (g *Game) handleActionIcon(iconX, iconY int, rightButton bool) {
 	switch iconX {
 	case 0:
 		if iconY == 0 {
-			g.world.Flood(g.player)
+			g.issueCommand(populous.Command{Kind: populous.CommandFlood, Player: g.player})
 		}
 	case 1:
 		if iconY == 0 {
-			g.world.WarPower(g.player)
+			g.issueCommand(populous.Command{Kind: populous.CommandArmageddon, Player: g.player})
 		} else if iconY == 1 {
-			g.world.VolcanoAtTile(g.player, g.xoff, g.yoff)
+			g.issueCommand(populous.Command{Kind: populous.CommandVolcano, Player: g.player, X: g.xoff, Y: g.yoff})
 		}
 	case 2:
 		switch iconY {
 		case 0:
-			g.world.QuakeAtTile(g.player, g.xoff, g.yoff)
+			g.issueCommand(populous.Command{Kind: populous.CommandQuake, Player: g.player, X: g.xoff, Y: g.yoff})
 		case 1:
-			g.world.Knight(g.player)
+			g.issueCommand(populous.Command{Kind: populous.CommandKnight, Player: g.player})
 		case 2:
 			g.setActionMode(ModeSwamp)
 		}
@@ -1191,7 +1244,9 @@ func (g *Game) handleActionIcon(iconX, iconY int, rightButton bool) {
 			g.setPlayerTendency(populous.JoinMode)
 		}
 	case 6:
-		if iconY == 0 || iconY == 1 {
+		if iconY == 0 {
+			g.setActionMode(ModeInspect)
+		} else if iconY == 1 {
 			g.setActionMode(ModeSculpt)
 		} else if iconY == 2 {
 			g.setActionMode(ModeMagnet)
@@ -1200,6 +1255,7 @@ func (g *Game) handleActionIcon(iconX, iconY int, rightButton bool) {
 		if iconY == 0 {
 			if rightButton {
 				g.centerOnPlayerLeader()
+				g.viewPlayerLeaderTemporarily()
 			} else {
 				g.centerOnMapPos(g.world.Magnets[g.player].GoTo)
 			}
@@ -1228,7 +1284,7 @@ func (g *Game) toggleEffects() {
 }
 
 func (g *Game) handleMouseNavigation() bool {
-	if g.world == nil || g.atlasView || g.mode == ModeMagnet || g.mode == ModeSwamp || !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
+	if g.world == nil || g.atlasView || g.mode == ModeMagnet || g.mode == ModeSwamp || g.mode == ModeInspect || !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		return false
 	}
 	x, y := ebiten.CursorPosition()
@@ -1266,17 +1322,17 @@ func (g *Game) handleSculptInput() {
 	}
 	if right {
 		if g.paintMap {
-			g.world.PaintLowerAt(g.hoverX, g.hoverY)
+			g.issueCommand(populous.Command{Kind: populous.CommandPaintLower, Player: g.player, X: g.hoverX, Y: g.hoverY})
 			return
 		}
-		g.world.LowerAt(g.player, g.hoverX, g.hoverY)
+		g.issueCommand(populous.Command{Kind: populous.CommandLower, Player: g.player, X: g.hoverX, Y: g.hoverY})
 		return
 	}
 	if g.paintMap {
-		g.world.PaintRaiseAt(g.hoverX, g.hoverY)
+		g.issueCommand(populous.Command{Kind: populous.CommandPaintRaise, Player: g.player, X: g.hoverX, Y: g.hoverY})
 		return
 	}
-	g.world.RaiseAt(g.player, g.hoverX, g.hoverY)
+	g.issueCommand(populous.Command{Kind: populous.CommandRaise, Player: g.player, X: g.hoverX, Y: g.hoverY})
 }
 
 func (g *Game) updateHoverTile() {
@@ -1437,6 +1493,7 @@ func (g *Game) setLevel(index int) {
 	if g.mode == ModeMagnet {
 		g.world.SetMagnetMode(g.player, populous.MagnetMode)
 	}
+	g.resetViewedPeep()
 	g.centerOnPlayerLeader()
 	g.endLost = false
 	g.endSummary = [2]populous.PlayerSummary{}
@@ -1445,6 +1502,111 @@ func (g *Game) setLevel(index int) {
 	if g.sound != nil {
 		g.sound.ResetHeartbeat()
 	}
+}
+
+func (g *Game) resetViewedPeep() {
+	g.viewPeep = -1
+	g.oldViewPeep = -1
+	g.viewTimer = 0
+	g.viewedCarrier = 0
+	if g.world == nil || g.player < 0 || g.player >= len(g.world.Magnets) {
+		return
+	}
+	g.viewedCarrier = g.world.Magnets[g.player].Carried
+	if index := g.viewedCarrier - 1; g.validViewedPeep(index) {
+		g.viewPeep = index
+	}
+}
+
+func (g *Game) validViewedPeep(index int) bool {
+	return g.world != nil && index >= 0 && index < len(g.world.Peeps) && g.world.Peeps[index].Population > 0
+}
+
+func (g *Game) setViewedPeep(index int) {
+	if !g.validViewedPeep(index) {
+		return
+	}
+	g.viewPeep = index
+	g.oldViewPeep = -1
+	g.viewTimer = 0
+}
+
+func (g *Game) setTemporaryViewedPeep(index int) {
+	if !g.validViewedPeep(index) {
+		return
+	}
+	if g.viewTimer == 0 {
+		g.oldViewPeep = g.viewPeep
+	}
+	g.viewPeep = index
+	g.viewTimer = temporaryViewTicks
+}
+
+func (g *Game) advanceViewedPeep() {
+	if g.viewTimer <= 0 {
+		return
+	}
+	g.viewTimer--
+	if g.viewTimer != 0 {
+		return
+	}
+	if g.validViewedPeep(g.oldViewPeep) {
+		g.viewPeep = g.oldViewPeep
+	} else {
+		g.viewPeep = -1
+	}
+	g.oldViewPeep = -1
+}
+
+func (g *Game) viewedPeepPosition() int {
+	if !g.validViewedPeep(g.viewPeep) {
+		return -1
+	}
+	return g.world.Peeps[g.viewPeep].AtPos
+}
+
+func (g *Game) refreshViewedPeep(previousPos int) {
+	if g.world == nil || g.player < 0 || g.player >= len(g.world.Magnets) {
+		g.viewPeep = -1
+		g.viewedCarrier = 0
+		return
+	}
+	carried := g.world.Magnets[g.player].Carried
+	if !g.validViewedPeep(g.viewPeep) {
+		g.viewPeep = -1
+		if previousPos >= 0 && previousPos < len(g.world.MapWho) {
+			replacement := int(g.world.MapWho[previousPos]) - 1
+			if g.validViewedPeep(replacement) {
+				g.viewPeep = replacement
+			}
+		}
+		if g.viewPeep < 0 && g.viewTimer > 0 && g.validViewedPeep(g.oldViewPeep) {
+			g.viewPeep = g.oldViewPeep
+			g.oldViewPeep = -1
+			g.viewTimer = 0
+		}
+	}
+	if g.viewPeep < 0 && g.viewedCarrier == 0 {
+		if index := carried - 1; g.validViewedPeep(index) {
+			g.viewPeep = index
+		}
+	}
+	g.viewedCarrier = carried
+}
+
+func (g *Game) centerOnViewedPeep() {
+	if g.validViewedPeep(g.viewPeep) {
+		g.centerOnMapPos(g.world.Peeps[g.viewPeep].AtPos)
+		return
+	}
+	g.centerOnPlayerLeader()
+}
+
+func (g *Game) viewPlayerLeaderTemporarily() {
+	if g.world == nil || g.player < 0 || g.player >= len(g.world.Magnets) {
+		return
+	}
+	g.setTemporaryViewedPeep(g.world.Magnets[g.player].Carried - 1)
 }
 
 func (g *Game) centerOnPlayerLeader() {
@@ -1489,6 +1651,7 @@ func (g *Game) centerOnNextBattle() {
 		peep := g.world.Peeps[g.viewFight]
 		if peep.Population > 0 && peep.Flags&populous.InBattle != 0 {
 			g.centerOnMapPos(peep.AtPos)
+			g.setTemporaryViewedPeep(g.viewFight)
 			return
 		}
 	}
@@ -1511,6 +1674,7 @@ func (g *Game) centerOnNextOwnPeep(headedOnly bool) {
 			continue
 		}
 		g.centerOnMapPos(peep.AtPos)
+		g.setTemporaryViewedPeep(g.viewPeople)
 		return
 	}
 }
@@ -1793,6 +1957,7 @@ func (g *Game) drawGame(screen *ebiten.Image) {
 		g.drawWorld(screen)
 		g.drawMiniMap(screen)
 		g.drawInterfaceGauges(screen)
+		g.drawViewedPeepStatus(screen)
 	}
 	if g.atlasView {
 		g.drawAtlasPreview(screen)
@@ -1808,7 +1973,11 @@ func (g *Game) drawGame(screen *ebiten.Image) {
 		line = fmt.Sprintf("LV %03d %s  LAND %d  POP %d/%d", lvl.Number, lvl.Code, lvl.Terrain, lvl.PlayerPopulation, lvl.EnemyPopulation)
 	}
 	ebitenutil.DebugPrintAt(screen, line, 6, 204)
-	ebitenutil.DebugPrintAt(screen, "ICONS ACTIVE  L/R: RAISE/LOWER  1 SET 2 JOIN 3 FIGHT", 6, 216)
+	instructions := "ICONS ACTIVE  L/R: RAISE/LOWER  1 SET 2 JOIN 3 FIGHT"
+	if g.multiplayerEnabled() {
+		instructions = g.network.displayStatus()
+	}
+	ebitenutil.DebugPrintAt(screen, instructions, 6, 216)
 	ebitenutil.DebugPrintAt(screen, g.statusLine(), 6, 228)
 	if g.tutorialActive {
 		g.drawTutorialOverlay(screen)
@@ -1856,7 +2025,9 @@ func (g *Game) drawEndScreen(screen *ebiten.Image) {
 		ebitenutil.DebugPrintAt(screen, line, 32, 62+i*14)
 	}
 	footer := "ENTER: LORD"
-	if g.endLost {
+	if g.multiplayerEnabled() {
+		footer = "ENTER: TITLE"
+	} else if g.endLost {
 		footer = "ENTER: RESTART LEVEL"
 	} else if g.tutorialActive {
 		footer = "ENTER: TITLE"
@@ -1992,6 +2163,7 @@ func (g *Game) drawHelp(screen *ebiten.Image) {
 		"Title: choose Tutorial, Conquest, Custom or Setup.",
 		"Code entry accepts original world names (GENESIS).",
 		"Game: left/right mouse sculpts where your people are.",
+		"Icon 6,0: left pins, right previews a person.",
 		"Minimap and interface arrows move the viewport.",
 		"Icons: flood, armageddon, volcano, quake, knight, swamp.",
 		"0,3 toggles music. 0,4 toggles effects/voices.",
@@ -2045,6 +2217,93 @@ func (g *Game) drawPopulationGauges(screen *ebiten.Image) {
 	drawInterfaceBar(screen, 39, 31, 32, populationGaugeHeight(g.world.PlayerPopulation(populous.DevilPlayer)), 8)
 }
 
+type viewedPeepBar struct {
+	height int
+	color  int
+}
+
+func (g *Game) drawViewedPeepStatus(screen *ebiten.Image) {
+	if g.sprites == nil || !g.validViewedPeep(g.viewPeep) {
+		return
+	}
+	peep := g.world.Peeps[g.viewPeep]
+	frame, x := g.viewedPeepSprite(peep)
+	g.drawSpriteFrame(screen, x, 22, frame)
+
+	left, right := g.viewedPeepBars(g.viewPeep, peep)
+	drawInterfaceBar(screen, 36, 37, 16, left.height, left.color)
+	drawInterfaceBar(screen, 37, 37, 16, right.height, right.color)
+}
+
+func (g *Game) viewedPeepSprite(peep populous.Peep) (frame, x int) {
+	if peep.Flags == populous.InTown {
+		return populous.FlagSprite + (g.tick & 1) + int(peep.Player)*2, 268
+	}
+	if peep.Flags&populous.InBattle != 0 {
+		return g.battleSpriteFrame(peep), 272
+	}
+	if peep.Flags&(populous.WaitForMe|populous.IAmWaiting) != 0 {
+		frame = populous.FirstWaitSprite + (g.tick & 1)
+		if peepLooksLikeKnight(peep) {
+			frame = populous.KnightWaitSprite + (g.tick & 1)
+		}
+		return frame + int(peep.Player)*2, 272
+	}
+	if peep.Flags&populous.InWater != 0 {
+		frame = populous.FirstWaterSprite + (g.world.GameTurn & 3)
+		if peepLooksLikeKnight(peep) {
+			frame = populous.FirstKnightWater + (g.world.GameTurn & 3)
+		}
+		return frame + int(peep.Player)*4, 272
+	}
+	_, _, frame = peepMotion(peep.Direction)
+	frame += g.tick & 1
+	if peepLooksLikeKnight(peep) {
+		frame += populous.KnightPeople
+	}
+	return frame + int(peep.Player)*populous.BadPeople, 272
+}
+
+func (g *Game) viewedPeepBars(index int, peep populous.Peep) (left, right viewedPeepBar) {
+	if peep.Flags&populous.InBattle != 0 {
+		population := [2]int{}
+		if player := int(peep.Player); player >= 0 && player < len(population) {
+			population[player] = peep.Population
+		}
+		if opponent := peep.BattlePopulation; opponent >= 0 && opponent < len(g.world.Peeps) && opponent != index {
+			other := g.world.Peeps[opponent]
+			if player := int(other.Player); player >= 0 && player < len(population) {
+				population[player] = other.Population
+			}
+		}
+		total := population[populous.GodPlayer] + population[populous.DevilPlayer]
+		if total <= 0 {
+			total = 1
+		}
+		return viewedPeepBar{height: population[populous.GodPlayer] * 16 / total, color: 15},
+			viewedPeepBar{height: population[populous.DevilPlayer] * 16 / total, color: 8}
+	}
+	if peep.Flags == populous.InTown {
+		life := g.world.LifeAt(int(peep.Player), peep.AtPos)
+		if life <= 0 {
+			life = 1
+		}
+		lifeHeight := life * 16 / populous.MaxFood
+		if life == populous.CityFood {
+			lifeHeight = 16
+		}
+		populationHeight := peep.Population * 16 / life
+		return viewedPeepBar{height: clampInt(lifeHeight, 0, 16), color: 10},
+			viewedPeepBar{height: clampInt(populationHeight, 0, 16), color: 12}
+	}
+	if peep.Population > 4096 {
+		return viewedPeepBar{height: peep.Population / 1024, color: 10},
+			viewedPeepBar{height: peep.Population % 1024, color: 9}
+	}
+	return viewedPeepBar{height: peep.Population / 256, color: 9},
+		viewedPeepBar{height: (peep.Population % 256) / 16, color: 9}
+}
+
 func populationGaugeHeight(population int) int {
 	if population <= 0 {
 		return 0
@@ -2072,6 +2331,8 @@ func (g *Game) statusLine() string {
 		mode = "MAGNET"
 	} else if g.mode == ModeSwamp {
 		mode = "SWAMP"
+	} else if g.mode == ModeInspect {
+		mode = "INSPECT"
 	}
 	if g.paintMap {
 		mode = "PAINT-" + mode
@@ -2204,10 +2465,12 @@ func (g *Game) drawMiniMap(screen *ebiten.Image) {
 	if magnet := g.world.Magnets[g.player].GoTo; magnet >= 0 && magnet < populous.MapWidth*populous.MapHeight {
 		putMiniPixel(g.miniPixels, magnet%populous.MapWidth, magnet/populous.MapWidth, populous.Palette(10, 0))
 	}
-	g.drawMiniMapViewport()
-
 	g.miniMap.ReplacePixels(g.miniPixels)
 	screen.DrawImage(g.miniMap, nil)
+	if g.sprites != nil {
+		x, y := populous.MiniMapViewportCrosshairPosition(g.xoff, g.yoff)
+		g.drawSpriteFrame(screen, x, y, populous.CrosshairSprite)
+	}
 }
 
 func (g *Game) miniMapColor(pos int) color.RGBA {
@@ -2260,20 +2523,6 @@ func (g *Game) mapColorIndex(block int) int {
 	return index
 }
 
-func (g *Game) drawMiniMapViewport() {
-	view := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-	x2 := g.xoff + 7
-	y2 := g.yoff + 7
-	for x := g.xoff; x <= x2; x++ {
-		putMiniPixel(g.miniPixels, x, g.yoff, view)
-		putMiniPixel(g.miniPixels, x, y2, view)
-	}
-	for y := g.yoff; y <= y2; y++ {
-		putMiniPixel(g.miniPixels, g.xoff, y, view)
-		putMiniPixel(g.miniPixels, x2, y, view)
-	}
-}
-
 func putMiniPixel(pixels []byte, mapX, mapY int, c color.RGBA) {
 	screenX := 64 + mapX - mapY
 	screenY := (mapX + mapY) >> 1
@@ -2295,19 +2544,35 @@ func (g *Game) drawWorld(screen *ebiten.Image) {
 	for y := 0; y < 8; y++ {
 		for x := 0; x < 8; x++ {
 			pos := (g.xoff + x) + (g.yoff+y)*populous.MapWidth
+			altitude := int(g.world.MapAlt[pos]) << 3
 			block := int(g.world.MapBlk[pos])
 			if block == populous.WaterBlock && g.tick%2 == 0 {
 				block = 16
 			}
-			g.drawBlock(screen, g.lands[land], x, y, int(g.world.MapAlt[pos])<<3, block)
+			g.drawBlock(screen, g.lands[land], x, y, altitude, block)
 			if overlay := int(g.world.MapBk2[pos]); overlay != 0 {
-				g.drawBlock(screen, g.lands[land], x, y, (int(g.world.MapAlt[pos])<<3)+8, overlay)
+				g.drawBlock(screen, g.lands[land], x, y, altitude+8, overlay)
+			}
+			devilTarget, godTarget := g.magnetTargetsAt(pos)
+			if devilTarget {
+				g.drawBlock(screen, g.lands[land], x, y, altitude+8, populous.DevilsMagnetBlock)
+			}
+			if godTarget {
+				g.drawBlock(screen, g.lands[land], x, y, altitude+8, populous.GodsMagnetBlock)
 			}
 		}
 	}
 	g.drawSideWalls(screen)
 	g.drawVisiblePeeps(screen)
 	g.drawHoverCursor(screen)
+}
+
+func (g *Game) magnetTargetsAt(pos int) (devil, god bool) {
+	if g.world == nil || pos <= 0 || pos >= populous.MapWidth*populous.MapHeight {
+		return false, false
+	}
+	return g.world.Magnets[populous.DevilPlayer].GoTo == pos,
+		g.world.Magnets[populous.GodPlayer].GoTo == pos
 }
 
 func (g *Game) drawBlock(screen *ebiten.Image, atlas *ebiten.Image, x, y, z, block int) {
@@ -2360,8 +2625,15 @@ func (g *Game) drawHoverCursor(screen *ebiten.Image) {
 	if pos < 0 || pos >= populous.MapWidth*populous.MapHeight {
 		return
 	}
+	cursorMode := populous.CursorDefault
+	switch g.mode {
+	case ModeMagnet:
+		cursorMode = populous.CursorMagnet
+	case ModeSwamp:
+		cursorMode = populous.CursorSwamp
+	}
 	topLeftX, topLeftY := blockScreenPosition(g.hoverLocalX, g.hoverLocalY, int(g.world.MapAlt[pos])<<3)
-	g.drawSpriteFrame(screen, topLeftX+8, topLeftY, populous.CrosshairSprite)
+	g.drawSpriteFrame(screen, topLeftX+8, topLeftY, populous.CursorSprite(cursorMode, g.player))
 }
 
 func (g *Game) drawVisiblePeeps(screen *ebiten.Image) {
@@ -2381,23 +2653,63 @@ func (g *Game) drawVisiblePeeps(screen *ebiten.Image) {
 			}
 			frame, dx, dy := g.peepSpriteFrame(pos, peep)
 			g.drawPeepSprite(screen, x, y, int(g.world.MapAlt[pos])<<3, frame, dx, dy)
+			if index-1 == g.viewPeep {
+				g.drawPeepSprite(screen, x, y, int(g.world.MapAlt[pos])<<3, populous.ShieldSprite, dx+8, dy)
+			}
+			if magnetFrame, ok := g.carriedMagnetFrame(index, peep); ok {
+				g.drawPeepSprite(screen, x, y, int(g.world.MapAlt[pos])<<3, magnetFrame, dx+8, dy)
+			}
 		}
 	}
+}
+
+func (g *Game) visiblePeepAt(screenX, screenY int) (int, bool) {
+	if g.world == nil {
+		return 0, false
+	}
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			pos := (g.xoff + x) + (g.yoff+y)*populous.MapWidth
+			peepID := int(g.world.MapWho[pos])
+			if peepID <= 0 || peepID > len(g.world.Peeps) {
+				continue
+			}
+			peep := g.world.Peeps[peepID-1]
+			if peep.Population <= 0 {
+				continue
+			}
+			_, dx, dy := g.peepSpriteFrame(pos, peep)
+			dstX, dstY := peepScreenPosition(x, y, int(g.world.MapAlt[pos])<<3, dx, dy)
+			if screenX >= dstX && screenX <= dstX+12 && screenY >= dstY && screenY <= dstY+8 {
+				return peepID - 1, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func (g *Game) carriedMagnetFrame(peepID int, peep populous.Peep) (int, bool) {
+	player := int(peep.Player)
+	if g.world == nil || player < 0 || player >= len(g.world.Magnets) || g.world.Magnets[player].Carried != peepID {
+		return 0, false
+	}
+	return populous.MagnetSprite + player, true
 }
 
 func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy int) {
 	switch {
 	case peep.Flags == populous.InTown:
-		return populous.FlagSprite + (g.tick & 1) + int(peep.Player)*2, 0, 0
+		return populous.FlagSprite + (g.tick & 1) + int(peep.Player)*2, 8, 0
 	case peep.Flags&populous.InRuin != 0:
 		return populous.FireSprite + (g.tick & 3), 0, 0
 	case peep.Flags&populous.InEffect != 0:
+		playerOffset := int(peep.Player) * 4
 		if peepLooksLikeKnight(peep) {
-			return peep.Frame + populous.KnightWinSprite - populous.VictorySprite, 0, 0
+			return peep.Frame + populous.KnightWinSprite - populous.VictorySprite + playerOffset, 8, 0
 		}
-		return peep.Frame, 0, 0
+		return peep.Frame + playerOffset, 8, 0
 	case peep.Flags&populous.InBattle != 0:
-		return g.battleSpriteFrame(peep), 0, 0
+		return g.battleSpriteFrame(peep), 8, 0
 	case peep.Flags&(populous.WaitForMe|populous.IAmWaiting) != 0:
 		frame := peep.Frame
 		if peepLooksLikeKnight(peep) {
@@ -2406,7 +2718,7 @@ func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy
 		if peep.Player == populous.DevilPlayer {
 			frame += 2
 		}
-		return frame, 0, 0
+		return frame, 8, 0
 	case peep.Flags&populous.InWater != 0:
 		frame := populous.FirstWaterSprite + (g.tick & 3)
 		if peepLooksLikeKnight(peep) {
@@ -2483,13 +2795,18 @@ func peepMotion(direction int) (stepX, stepY, baseFrame int) {
 }
 
 func (g *Game) drawPeepSprite(screen *ebiten.Image, x, y, z, frame, dx, dy int) {
+	dstX, dstY := peepScreenPosition(x, y, z, dx, dy)
+	g.drawSpriteFrame(screen, dstX, dstY, frame)
+}
+
+func peepScreenPosition(x, y, z, dx, dy int) (int, int) {
 	xPos := x << 3
 	yPos := y << 3
 	r5 := xPos + yPos - z
 	r4 := (xPos << 1) - (yPos << 1)
 	dstX := r4 + 320 - 128 - 8 + dx
 	dstY := r5 + 64 + dy
-	g.drawSpriteFrame(screen, dstX, dstY, frame)
+	return dstX, dstY
 }
 
 func (g *Game) drawFixedSprite(screen *ebiten.Image, x, y, z, frame int) {

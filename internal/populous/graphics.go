@@ -25,6 +25,39 @@ const (
 
 var transparentPixel = color.RGBA{}
 
+type CursorMode uint8
+
+const (
+	CursorDefault CursorMode = iota
+	CursorMagnet
+	CursorSwamp
+)
+
+// CursorSprite returns the original placement pointer graphic. PUT_MAGNET used
+// pointer player+2 (Ankh for good, skull for evil), while PUT_SWAMP used 5.
+func CursorSprite(mode CursorMode, player int) int {
+	switch mode {
+	case CursorMagnet:
+		switch player {
+		case GodPlayer:
+			return AnkhSprite
+		case DevilPlayer:
+			return SkullSprite
+		}
+	case CursorSwamp:
+		return SwampHandSprite
+	}
+	return CrosshairSprite
+}
+
+// MiniMapViewportCrosshairPosition returns the original screen coordinates for
+// the crosshair marking the centre of the 8x8 world viewport on the minimap.
+func MiniMapViewportCrosshairPosition(xoff, yoff int) (int, int) {
+	centerX := xoff + 3
+	centerY := yoff + 3
+	return 64 + centerX - centerY - 3, (centerX+centerY)/2 - 3
+}
+
 func DecodeChunkyScreen4BPP(data []byte, width, height int, paletteVariant int) (*image.RGBA, error) {
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("invalid screen dimensions %dx%d", width, height)

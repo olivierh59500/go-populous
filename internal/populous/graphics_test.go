@@ -2,6 +2,45 @@ package populous
 
 import "testing"
 
+func TestCursorSpriteMatchesOriginalPlacementPointers(t *testing.T) {
+	tests := []struct {
+		name   string
+		mode   CursorMode
+		player int
+		want   int
+	}{
+		{name: "default", mode: CursorDefault, player: GodPlayer, want: CrosshairSprite},
+		{name: "good magnet", mode: CursorMagnet, player: GodPlayer, want: AnkhSprite},
+		{name: "evil magnet", mode: CursorMagnet, player: DevilPlayer, want: SkullSprite},
+		{name: "swamp", mode: CursorSwamp, player: DevilPlayer, want: SwampHandSprite},
+		{name: "invalid magnet player", mode: CursorMagnet, player: 2, want: CrosshairSprite},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CursorSprite(tt.mode, tt.player); got != tt.want {
+				t.Fatalf("CursorSprite(%d, %d) = %d, want %d", tt.mode, tt.player, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMiniMapViewportCrosshairPositionMatchesOriginalProjection(t *testing.T) {
+	tests := []struct {
+		xoff, yoff   int
+		wantX, wantY int
+	}{
+		{xoff: 0, yoff: 0, wantX: 61, wantY: 0},
+		{xoff: 10, yoff: 20, wantX: 51, wantY: 15},
+		{xoff: MapWidth - 8, yoff: MapHeight - 8, wantX: 61, wantY: 56},
+	}
+	for _, tt := range tests {
+		gotX, gotY := MiniMapViewportCrosshairPosition(tt.xoff, tt.yoff)
+		if gotX != tt.wantX || gotY != tt.wantY {
+			t.Errorf("position(%d, %d) = (%d, %d), want (%d, %d)", tt.xoff, tt.yoff, gotX, gotY, tt.wantX, tt.wantY)
+		}
+	}
+}
+
 func TestDecodeChunkyScreen4BPPNibbleOrder(t *testing.T) {
 	img, err := DecodeChunkyScreen4BPP([]byte{0x21}, 2, 1, 0)
 	if err != nil {

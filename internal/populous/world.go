@@ -5,28 +5,35 @@ const (
 	MapHeight = 64
 	EndWidth  = 65
 
-	WaterBlock       = 0
-	FlatBlock        = 15
-	FarmBlock        = 31
-	FirstTown        = 32
-	LastTown         = 42
-	CityTower        = 41
-	CityCentre       = 42
-	CityWall1        = 43
-	CityWall2        = 44
-	FirstRuinTown    = 54
-	SwampBlock       = 53
-	RockBlock        = 47
-	TreeBlock        = 50
-	BadLand          = 66
-	BlocksPerLand    = 70
-	FlagSprite       = 64
-	ManaSprite       = 69
-	GodsHandSprite   = 78
-	DevilsHandSprite = 79
-	CrosshairSprite  = 84
-	SideWall1        = 77
-	SideWall2        = 76
+	WaterBlock        = 0
+	FlatBlock         = 15
+	FarmBlock         = 31
+	FirstTown         = 32
+	LastTown          = 42
+	CityTower         = 41
+	CityCentre        = 42
+	CityWall1         = 43
+	CityWall2         = 44
+	GodsMagnetBlock   = 45
+	DevilsMagnetBlock = 46
+	FirstRuinTown     = 54
+	SwampBlock        = 53
+	RockBlock         = 47
+	TreeBlock         = 50
+	BadLand           = 66
+	BlocksPerLand     = 70
+	FlagSprite        = 64
+	ShieldSprite      = 68
+	ManaSprite        = 69
+	MagnetSprite      = 74
+	GodsHandSprite    = 78
+	DevilsHandSprite  = 79
+	AnkhSprite        = 80
+	SkullSprite       = 81
+	SwampHandSprite   = 83
+	CrosshairSprite   = 84
+	SideWall1         = 77
+	SideWall2         = 76
 
 	GodPlayer   = 0
 	DevilPlayer = 1
@@ -196,9 +203,13 @@ type World struct {
 	ComputerControlled [2]bool
 	BattleWon          [2]int
 	War                bool
-	Score              int
-	ScorePlayer        int
-	SoundEvents        []int
+	// Scores is the canonical, shared score state for both players. Score and
+	// ScorePlayer below are retained as the selected local view for save-game
+	// compatibility and UI callers.
+	Scores      [2]int
+	Score       int
+	ScorePlayer int
+	SoundEvents []int
 
 	rng lcg
 }
@@ -513,9 +524,7 @@ func (w *World) SwampAt(player, startX, startY int) bool {
 	if !w.spendPowerMana(player, ManaSwampCost, computerSwamp) {
 		return false
 	}
-	if player == w.ScorePlayer {
-		w.Score += ScoreSwamp
-	}
+	w.addScore(player, ScoreSwamp)
 	for i := 0; i < noTrees; i++ {
 		x := startX + w.rng.next()%7 - 3
 		y := startY + w.rng.next()%7 - 3
@@ -543,9 +552,7 @@ func (w *World) QuakeAt(player, x, y int) bool {
 		return false
 	}
 	w.queueSound(TuneQuake)
-	if player == w.ScorePlayer {
-		w.Score += ScoreQuake
-	}
+	w.addScore(player, ScoreQuake)
 	bounds := newAltBounds(x, y)
 	for pass := 0; pass < 2; pass++ {
 		for yy := y; yy < y+9; yy++ {
@@ -582,9 +589,7 @@ func (w *World) VolcanoAt(player, x, y int) bool {
 		return false
 	}
 	w.queueSound(TuneVolcano)
-	if player == w.ScorePlayer {
-		w.Score += ScoreVolcano
-	}
+	w.addScore(player, ScoreVolcano)
 	bounds := newAltBounds(x, y)
 	for ring := 0; ring <= 4; ring++ {
 		for xx := ring; xx < 9-ring; xx++ {
@@ -636,9 +641,7 @@ func (w *World) Flood(player int) bool {
 		return false
 	}
 	w.queueSound(TuneFlood)
-	if player == w.ScorePlayer {
-		w.Score += ScoreFlood
-	}
+	w.addScore(player, ScoreFlood)
 	for pos := range w.Alt {
 		if w.Alt[pos] > 0 {
 			w.Alt[pos]--
@@ -660,9 +663,7 @@ func (w *World) Knight(player int) bool {
 		return false
 	}
 	w.queueSound(TuneKnighted)
-	if player == w.ScorePlayer {
-		w.Score += ScoreKnight
-	}
+	w.addScore(player, ScoreKnight)
 	if w.Peeps[carried].Flags&InTown != 0 {
 		w.setTown(carried, true)
 	}
@@ -686,9 +687,7 @@ func (w *World) WarPower(player int) bool {
 		return false
 	}
 	w.queueSound(TuneWar)
-	if player == w.ScorePlayer {
-		w.Score += ScoreWar
-	}
+	w.addScore(player, ScoreWar)
 	w.War = true
 	w.setWarMagnets()
 	for i := range w.Peeps {
@@ -791,13 +790,42 @@ func (w *World) SetScorePlayer(player int) bool {
 	if player < 0 || player >= len(w.Magnets) {
 		return false
 	}
-	oldBase := w.initialScoreFor(w.ScorePlayer)
-	newBase := w.initialScoreFor(player)
-	if w.Score == oldBase {
-		w.Score = newBase
-	}
+	w.commitLocalScoreView()
 	w.ScorePlayer = player
+	w.Score = w.Scores[player]
 	return true
+}
+
+// addScore updates the canonical score even when the scoring player is not the
+// locally selected viewpoint. This is required for deterministic multiplayer
+// snapshots and resynchronization.
+func (w *World) addScore(player, amount int) {
+	if player < GodPlayer || player > DevilPlayer || amount == 0 {
+		return
+	}
+	w.commitLocalScoreView()
+	w.Scores[player] += amount
+	w.Score = w.Scores[w.ScorePlayer]
+}
+
+// commitLocalScoreView initializes legacy/hand-written World values and keeps
+// the compatibility Score field projected from canonical Scores. A non-zero
+// legacy Score is imported only while the selected canonical slot is missing;
+// once initialized, Scores is authoritative.
+func (w *World) commitLocalScoreView() {
+	if w.ScorePlayer < GodPlayer || w.ScorePlayer > DevilPlayer {
+		w.ScorePlayer = GodPlayer
+	}
+	selectedMissing := w.Scores[w.ScorePlayer] == 0
+	for player := range w.Scores {
+		if w.Scores[player] == 0 {
+			w.Scores[player] = w.initialScoreFor(player)
+		}
+	}
+	if selectedMissing && w.Score != 0 {
+		w.Scores[w.ScorePlayer] = w.Score
+	}
+	w.Score = w.Scores[w.ScorePlayer]
 }
 
 func (w *World) initialScoreFor(player int) int {
@@ -881,7 +909,8 @@ func (w *World) EndScore(player int, lost bool) int {
 	if player < 0 || player >= len(w.Magnets) {
 		return 0
 	}
-	score := w.Score
+	w.commitLocalScoreView()
+	score := w.Scores[player]
 	opponent := player ^ 1
 	if w.BattleWon[player] > w.BattleWon[opponent] {
 		score += ScoreBattle
@@ -1117,7 +1146,10 @@ func (w *World) placeFirstPeople() {
 	if godCount <= 0 {
 		godCount = 1
 	}
-	w.Score = w.initialScoreFor(w.ScorePlayer)
+	for player := range w.Scores {
+		w.Scores[player] = w.initialScoreFor(player)
+	}
+	w.Score = w.Scores[w.ScorePlayer]
 	w.placeInitialSide(GodPlayer, godCount, MapWidth*2, MapWidth*MapHeight, 1)
 
 	devilCount := int(w.Level.EnemyPopulation)
@@ -2483,6 +2515,12 @@ func (w *World) cityPieceCount(atPos int) int {
 		}
 	}
 	return pieces
+}
+
+// LifeAt returns the amount of settlement-supporting land around a map tile.
+// The interface uses the same value as town growth to draw its food gauge.
+func (w *World) LifeAt(player, position int) int {
+	return w.checkLife(player, position)
 }
 
 func (w *World) checkLife(player, position int) int {
