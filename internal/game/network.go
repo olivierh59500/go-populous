@@ -21,6 +21,7 @@ const (
 	networkCatchUpTicks    = 4
 	networkPingInterval    = 5 * time.Second
 	networkPingTimeout     = 15 * time.Second
+	networkProgressTimeout = 5 * time.Second
 )
 
 type networkRole uint8
@@ -69,6 +70,7 @@ type networkGame struct {
 	pingNonce      uint64
 	pingDeadline   time.Time
 	nextPing       time.Time
+	lastBatchAt    time.Time
 	desyncCount    int
 }
 
@@ -301,6 +303,12 @@ func (g *Game) advanceWorld() bool {
 			advanced = true
 			g.network.afterTick(g)
 		}
+		if advanced {
+			g.network.lastBatchAt = time.Now()
+		} else if g.network.progressTimedOut(time.Now()) {
+			g.network.fail(errors.New("multiplayer host stopped advancing the simulation"))
+			return false
+		}
 	}
 	if advanced {
 		g.refreshViewedPeep(viewedPos)
@@ -386,7 +394,9 @@ func (network *networkGame) pollConnection(g *Game) {
 			network.client = result.Session
 			network.connected = true
 			network.status = "ONLINE AS EVIL"
-			network.nextPing = time.Now()
+			now := time.Now()
+			network.nextPing = now
+			network.lastBatchAt = now
 		default:
 		}
 	}
@@ -497,6 +507,7 @@ func (network *networkGame) handleEvent(g *Game, message multiplayer.WireMessage
 		g.resetViewedPeep()
 		network.localHashes = make(map[uint64][32]byte)
 		network.remoteHashes = make(map[uint64][32]byte)
+		network.lastBatchAt = time.Now()
 		network.status = "ONLINE AS EVIL - RESYNCED"
 	case *multiplayer.ErrorMessage:
 		network.fail(fmt.Errorf("remote rejected the session (%s): %s", value.Code, value.Message))
@@ -540,6 +551,10 @@ func (network *networkGame) pollHeartbeat() {
 		return
 	}
 	network.pingDeadline = now.Add(networkPingTimeout)
+}
+
+func (network *networkGame) progressTimedOut(now time.Time) bool {
+	return network != nil && network.role == networkClient && network.connected && !network.terminal && !network.lastBatchAt.IsZero() && now.After(network.lastBatchAt.Add(networkProgressTimeout))
 }
 
 func (network *networkGame) afterTick(g *Game) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"net"
 	"reflect"
@@ -83,6 +84,148 @@ func TestReadMessageRejectsWrongVersionBeforeAllocation(t *testing.T) {
 	_, err := ReadMessage(bytes.NewReader(frame[:]))
 	if !errors.Is(err, ErrVersionMismatch) {
 		t.Fatalf("ReadMessage error = %v, want ErrVersionMismatch", err)
+	}
+}
+
+func TestStateFramesAreCompressedAndSmallMessagesAreNot(t *testing.T) {
+	world := testWorld()
+	for len(world.Peeps) < populous.MaxPeeps {
+		world.Peeps = append(world.Peeps, populous.Peep{
+			Flags:      populous.OnMove,
+			Player:     byte(len(world.Peeps) & 1),
+			Population: 100,
+			AtPos:      len(world.Peeps) % (populous.MapWidth * populous.MapHeight),
+		})
+	}
+	start := Start{Tick: 0, Snapshot: world.Snapshot(), Rules: world.Rules}
+	var framed bytes.Buffer
+	if err := WriteMessage(&framed, start); err != nil {
+		t.Fatal(err)
+	}
+	data := framed.Bytes()
+	if data[7] != frameFlagGZIP {
+		t.Fatalf("start frame flags = %#x, want gzip", data[7])
+	}
+	raw, err := json.Marshal(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) >= len(raw) || len(data) >= 16<<10 {
+		t.Fatalf("compressed start = %d bytes, raw = %d", len(data), len(raw))
+	}
+
+	framed.Reset()
+	if err := WriteMessage(&framed, CommandBatch{Tick: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := framed.Bytes()[7]; got != 0 {
+		t.Fatalf("batch frame flags = %#x, want zero", got)
+	}
+}
+
+func TestReadMessageRejectsCorruptCompressedSnapshot(t *testing.T) {
+	world := testWorld()
+	var framed bytes.Buffer
+	if err := WriteMessage(&framed, Start{Tick: 0, Snapshot: world.Snapshot(), Rules: world.Rules}); err != nil {
+		t.Fatal(err)
+	}
+	data := append([]byte(nil), framed.Bytes()...)
+	data[len(data)-1] ^= 0xff // Corrupt the gzip checksum.
+	if _, err := ReadMessage(bytes.NewReader(data)); err == nil {
+		t.Fatal("ReadMessage accepted corrupt gzip payload")
+	}
+}
+
+func TestReadMessageBoundsDecompressionBomb(t *testing.T) {
+	bomb := bytes.Repeat([]byte{' '}, MaxSnapshotPayload+1)
+	compressed, err := compressSnapshotPayload(bomb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compressed) > MaxFramePayload {
+		t.Fatalf("test bomb compressed to %d bytes", len(compressed))
+	}
+	frame := make([]byte, frameHeaderSize+len(compressed))
+	copy(frame[:4], frameMagic[:])
+	binary.BigEndian.PutUint16(frame[4:6], ProtocolVersion)
+	frame[6] = byte(MessageSnapshot)
+	frame[7] = frameFlagGZIP
+	binary.BigEndian.PutUint32(frame[8:12], uint32(len(compressed)))
+	copy(frame[frameHeaderSize:], compressed)
+	_, err = ReadMessage(bytes.NewReader(frame))
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("ReadMessage error = %v, want ErrFrameTooLarge", err)
+	}
+}
+
+func TestReadMessageAppliesTypeLimitBeforePayloadAllocation(t *testing.T) {
+	var header [frameHeaderSize]byte
+	copy(header[:4], frameMagic[:])
+	binary.BigEndian.PutUint16(header[4:6], ProtocolVersion)
+	header[6] = byte(MessageHello)
+	binary.BigEndian.PutUint32(header[8:12], maxHelloPayload+1)
+	_, err := ReadMessage(bytes.NewReader(header[:]))
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("ReadMessage error = %v, want ErrFrameTooLarge", err)
+	}
+}
+
+func TestReadMessageRejectsOversizedCompressedSnapshotBeforeAllocation(t *testing.T) {
+	var header [frameHeaderSize]byte
+	copy(header[:4], frameMagic[:])
+	binary.BigEndian.PutUint16(header[4:6], ProtocolVersion)
+	header[6] = byte(MessageSnapshot)
+	header[7] = frameFlagGZIP
+	binary.BigEndian.PutUint32(header[8:12], MaxFramePayload+1)
+	_, err := ReadMessage(bytes.NewReader(header[:]))
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("ReadMessage error = %v, want ErrFrameTooLarge", err)
+	}
+}
+
+func TestReadMessageRequiresCompressionOnlyForStateFrames(t *testing.T) {
+	tests := []struct {
+		name  string
+		typ   MessageType
+		flags byte
+	}{
+		{name: "uncompressed start", typ: MessageStart},
+		{name: "compressed batch", typ: MessageBatch, flags: frameFlagGZIP},
+		{name: "unknown flag", typ: MessageHello, flags: 0x80},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var header [frameHeaderSize]byte
+			copy(header[:4], frameMagic[:])
+			binary.BigEndian.PutUint16(header[4:6], ProtocolVersion)
+			header[6] = byte(test.typ)
+			header[7] = test.flags
+			_, err := ReadMessage(bytes.NewReader(header[:]))
+			if !errors.Is(err, ErrBadFrame) {
+				t.Fatalf("ReadMessage error = %v, want ErrBadFrame", err)
+			}
+		})
+	}
+}
+
+func TestTickRateMustMatchSimulation(t *testing.T) {
+	welcome := Welcome{
+		ProtocolVersion:  ProtocolVersion,
+		StateHashVersion: populous.StateHashVersion,
+		AssignedPlayer:   populous.DevilPlayer,
+		TickRate:         DefaultTickRate + 1,
+	}
+	if err := validateMessage(welcome); !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("validateMessage error = %v, want ErrInvalidMessage", err)
+	}
+	world := testWorld()
+	config := HostHandshakeConfig{
+		AssignedPlayer: populous.DevilPlayer,
+		TickRate:       DefaultTickRate + 1,
+		Start:          Start{Snapshot: world.Snapshot(), Rules: world.Rules},
+	}
+	if err := validateHostHandshakeConfig(config); !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("validateHostHandshakeConfig error = %v, want ErrInvalidMessage", err)
 	}
 }
 

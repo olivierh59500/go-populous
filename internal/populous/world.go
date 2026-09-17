@@ -297,6 +297,7 @@ func GenerateWorldWithRules(level Level, rules TerrainRules) *World {
 		Level:   level,
 		Rules:   rules,
 		Terrain: terrain,
+		Peeps:   make([]Peep, 0, MaxPeeps),
 		rng:     lcg(uint16(level.SeedOffset) + uint16((level.Number*5)&7)),
 	}
 	w.makeAlt()
@@ -761,13 +762,33 @@ func (w *World) protectedPowerPositions() map[int]bool {
 }
 
 func (w *World) PlayerPopulation(player int) int {
+	if w == nil || player < GodPlayer || player > DevilPlayer {
+		return 0
+	}
 	total := 0
-	for _, peep := range w.Peeps {
+	for i := range w.Peeps {
+		peep := &w.Peeps[i]
 		if peep.Population > 0 && int(peep.Player) == player {
 			total += peep.Population
 		}
 	}
 	return total
+}
+
+// PlayerPopulations returns both population totals after one peep scan.
+func (w *World) PlayerPopulations() [2]int {
+	populations := [2]int{}
+	if w == nil {
+		return populations
+	}
+	for i := range w.Peeps {
+		peep := &w.Peeps[i]
+		player := int(peep.Player)
+		if peep.Population > 0 && player >= GodPlayer && player <= DevilPlayer {
+			populations[player] += peep.Population
+		}
+	}
+	return populations
 }
 
 func (w *World) DrainSoundEvents() []int {
@@ -875,10 +896,11 @@ func (w *World) ResultFor(player int) int {
 		return ResultOngoing
 	}
 	opponent := player ^ 1
-	if w.PlayerPopulation(player) == 0 {
+	populations := w.PlayerPopulations()
+	if populations[player] == 0 {
 		return ResultLost
 	}
-	if w.PlayerPopulation(opponent) == 0 {
+	if populations[opponent] == 0 {
 		return ResultWon
 	}
 	return ResultOngoing
@@ -1062,8 +1084,8 @@ func clamp(value, minValue, maxValue int) int {
 }
 
 func (w *World) makeMap(x1, y1, x2, y2 int) {
-	for x := x1; x <= x2; x++ {
-		for y := y1; y <= y2; y++ {
+	for y := y1; y <= y2; y++ {
+		for x := x1; x <= x2; x++ {
 			pos := x + y*MapWidth
 			altPos := x + EndWidth*y
 			avg := (w.Alt[altPos] + w.Alt[altPos+1] + w.Alt[altPos+EndWidth] + w.Alt[altPos+EndWidth+1]) >> 2
@@ -1228,10 +1250,12 @@ func (w *World) TickWithComputer(computerControlled [2]bool) {
 	if w.War {
 		w.setWarMagnets()
 	}
-	w.updateComputerStats()
-	for player, controlled := range w.ComputerControlled {
-		if controlled {
-			w.runComputerPlayer(player)
+	if w.ComputerControlled[GodPlayer] || w.ComputerControlled[DevilPlayer] {
+		w.updateComputerStats()
+		for player, controlled := range w.ComputerControlled {
+			if controlled {
+				w.runComputerPlayer(player)
+			}
 		}
 	}
 	for i := range w.Magnets {
@@ -1508,8 +1532,11 @@ func (w *World) computerSetMagnet(player int) bool {
 func (w *World) computerEffect(player int) bool {
 	stats := &w.Computer[player]
 	mode := stats.Mode
-	if mode&computerWar != 0 && w.Magnets[player].Mana > ManaWarCost+999 && w.PlayerPopulation(player) > w.PlayerPopulation(player^1) {
-		return w.WarPower(player)
+	if mode&computerWar != 0 && w.Magnets[player].Mana > ManaWarCost+999 {
+		populations := w.PlayerPopulations()
+		if populations[player] > populations[player^1] {
+			return w.WarPower(player)
+		}
 	}
 	if mode&computerFlood != 0 && w.Magnets[player].Mana > ManaFloodCost+1999 {
 		return w.Flood(player)

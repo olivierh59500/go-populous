@@ -15,10 +15,8 @@ type Bundle struct {
 	ExtractedDir string
 	Screens      map[string]*image.RGBA
 	Lands        []*image.RGBA
-	Blocks       *image.RGBA
 	Sprites      *image.RGBA
 	BigSprites   *image.RGBA
-	Font         *image.RGBA
 	Mouths       *image.RGBA
 	TerrainRules []populous.TerrainRules
 	Levels       []populous.Level
@@ -97,9 +95,6 @@ func (b *Bundle) loadPlanarAssets() error {
 			return fmt.Errorf("%s blocks: %w", name, err)
 		}
 		b.Lands = append(b.Lands, img)
-		if i == 0 {
-			b.Blocks = img
-		}
 	}
 
 	sprites, err := os.ReadFile(filepath.Join(b.AmigaDir, "sprites0.dat"))
@@ -120,14 +115,6 @@ func (b *Bundle) loadPlanarAssets() error {
 		return fmt.Errorf("spr_320.dat: %w", err)
 	}
 
-	font, err := os.ReadFile(filepath.Join(b.AmigaDir, "font.dat"))
-	if err != nil {
-		return fmt.Errorf("font.dat: %w", err)
-	}
-	b.Font, err = populous.DecodePlanarMasked(font, 8, true, 0)
-	if err != nil {
-		return fmt.Errorf("font.dat: %w", err)
-	}
 	return nil
 }
 

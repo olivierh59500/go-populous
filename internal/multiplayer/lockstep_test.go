@@ -294,6 +294,57 @@ func TestSessionsPingRoundTrip(t *testing.T) {
 	assertPong(client.Events(), 42, 1002)
 }
 
+func TestHostRejectsClientOnlyProtocolViolations(t *testing.T) {
+	hostConnection, remoteConnection := net.Pipe()
+	hostPeer, _ := NewPeer(hostConnection)
+	remotePeer, _ := NewPeer(remoteConnection)
+	defer hostPeer.Close()
+	defer remotePeer.Close()
+
+	host, err := NewHostSession(hostPeer, populous.GodPlayer, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remotePeer.TrySend(CommandBatch{Tick: 1}); err != nil {
+		t.Fatal(err)
+	}
+	assertSessionIssue(t, host.Issues(), ErrUnexpectedMessage)
+}
+
+func TestClientRejectsHostProtocolViolations(t *testing.T) {
+	hostConnection, clientConnection := net.Pipe()
+	hostPeer, _ := NewPeer(hostConnection)
+	clientPeer, _ := NewPeer(clientConnection)
+	defer hostPeer.Close()
+	defer clientPeer.Close()
+
+	client, err := NewClientSession(clientPeer, populous.DevilPlayer, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := Intent{
+		RequestedTick: 1,
+		Sequence:      1,
+		Command:       populous.Command{Kind: populous.CommandSetTendency, Player: populous.GodPlayer, Value: populous.SettleMode},
+	}
+	if err := hostPeer.TrySend(intent); err != nil {
+		t.Fatal(err)
+	}
+	assertSessionIssue(t, client.Issues(), ErrUnexpectedMessage)
+}
+
+func assertSessionIssue(t *testing.T, issues <-chan error, target error) {
+	t.Helper()
+	select {
+	case err := <-issues:
+		if !errors.Is(err, target) {
+			t.Fatalf("session issue = %v, want %v", err, target)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %v", target)
+	}
+}
+
 func awaitBatch(t *testing.T, client *ClientSession, tick uint64) CommandBatch {
 	t.Helper()
 	deadline := time.NewTimer(2 * time.Second)

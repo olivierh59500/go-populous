@@ -122,8 +122,8 @@ func validateHostHandshakeConfig(config HostHandshakeConfig) error {
 	if config.AssignedPlayer != populous.GodPlayer && config.AssignedPlayer != populous.DevilPlayer {
 		return fmt.Errorf("%w: assigned player %d", ErrInvalidMessage, config.AssignedPlayer)
 	}
-	if config.TickRate == 0 || config.TickRate > 240 {
-		return fmt.Errorf("%w: tick rate %d", ErrInvalidMessage, config.TickRate)
+	if config.TickRate != DefaultTickRate {
+		return fmt.Errorf("%w: tick rate %d, want %d", ErrInvalidMessage, config.TickRate, DefaultTickRate)
 	}
 	if config.InputDelay > MaxFutureTicks {
 		return fmt.Errorf("%w: input delay %d", ErrInvalidMessage, config.InputDelay)

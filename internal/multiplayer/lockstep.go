@@ -160,13 +160,22 @@ func (session *HostSession) receiveLoop() {
 				_ = session.peer.TrySend(ErrorMessage{Code: "invalid_intent", Message: err.Error()})
 			}
 		case *Ping:
-			_ = session.peer.TrySend(Pong{Nonce: value.Nonce, SentUnixMillis: value.SentUnixMillis})
-		default:
+			if err := session.peer.TrySend(Pong{Nonce: value.Nonce, SentUnixMillis: value.SentUnixMillis}); err != nil {
+				session.reportIssue(err)
+				session.peer.stop(err)
+				return
+			}
+		case *StateHash, *Pong, *Disconnect, *ErrorMessage:
 			select {
 			case session.events <- message:
 			case <-session.peer.Done():
 				return
 			}
+		default:
+			err := fmt.Errorf("%w: host received %s", ErrUnexpectedMessage, TypeOf(message))
+			session.reportIssue(err)
+			session.peer.stop(err)
+			return
 		}
 	}
 }
@@ -405,13 +414,22 @@ func (session *ClientSession) receiveLoop() {
 				return
 			}
 		case *Ping:
-			_ = session.peer.TrySend(Pong{Nonce: value.Nonce, SentUnixMillis: value.SentUnixMillis})
-		default:
+			if err := session.peer.TrySend(Pong{Nonce: value.Nonce, SentUnixMillis: value.SentUnixMillis}); err != nil {
+				session.reportIssue(err)
+				session.peer.stop(err)
+				return
+			}
+		case *StateHash, *Snapshot, *Pong, *Disconnect, *ErrorMessage:
 			select {
 			case session.events <- message:
 			case <-session.peer.Done():
 				return
 			}
+		default:
+			err := fmt.Errorf("%w: client received %s", ErrUnexpectedMessage, TypeOf(message))
+			session.reportIssue(err)
+			session.peer.stop(err)
+			return
 		}
 	}
 }

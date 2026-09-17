@@ -115,6 +115,12 @@ Run the test suite with:
 go test ./...
 ```
 
+Run the simulation and protocol benchmarks with:
+
+```sh
+go test -run '^$' -bench . -benchmem ./internal/populous ./internal/multiplayer
+```
+
 Build a local binary with:
 
 ```sh

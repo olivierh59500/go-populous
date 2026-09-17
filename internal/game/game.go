@@ -18,8 +18,8 @@ import (
 const (
 	logicalWidth  = 320
 	logicalHeight = 240
-	miniMapWidth  = 128
-	miniMapHeight = 64
+	miniMapWidth  = populous.MiniMapWidth
+	miniMapHeight = populous.MiniMapHeight
 	saveVersion   = 2
 	saveFileName  = "go-populous.sav"
 
@@ -178,13 +178,18 @@ type Game struct {
 	atlasView          bool
 	fullscreen         bool
 	images             map[string]*ebiten.Image
-	lands              []*ebiten.Image
-	blocks             *ebiten.Image
-	sprites            *ebiten.Image
-	bigSprites         *ebiten.Image
-	mouths             *ebiten.Image
+	landFrames         [][]*ebiten.Image
+	spriteFrames       []*ebiten.Image
+	bigSpriteFrames    []*ebiten.Image
+	mouthFrames        []*ebiten.Image
+	panel              *ebiten.Image
+	frameCache         *ebiten.Image
+	frameCacheTick     int
+	frameCacheState    State
+	frameCacheValid    bool
 	miniMap            *ebiten.Image
 	miniPixels         []byte
+	miniMapDirty       bool
 	levelIndex         int
 	titleCode          string
 	titleMessage       string
@@ -240,26 +245,56 @@ func New(bundle *assets.Bundle) *Game {
 		g.images[name] = ebiten.NewImageFromImage(img)
 	}
 	for _, img := range bundle.Lands {
-		g.lands = append(g.lands, ebiten.NewImageFromImage(img))
-	}
-	if bundle.Blocks != nil {
-		g.blocks = ebiten.NewImageFromImage(bundle.Blocks)
+		g.landFrames = append(g.landFrames, verticalImageFrames(ebiten.NewImageFromImage(img), populous.BlockWidth, populous.BlockHeight))
 	}
 	if bundle.Sprites != nil {
-		g.sprites = ebiten.NewImageFromImage(bundle.Sprites)
+		g.spriteFrames = verticalImageFrames(ebiten.NewImageFromImage(bundle.Sprites), populous.SpriteWidth, populous.SpriteHeight)
 	}
 	if bundle.BigSprites != nil {
-		g.bigSprites = ebiten.NewImageFromImage(bundle.BigSprites)
+		g.bigSpriteFrames = verticalImageFrames(ebiten.NewImageFromImage(bundle.BigSprites), populous.BigSpriteWidth, populous.BigSpriteHeight)
 	}
 	if bundle.Mouths != nil {
-		g.mouths = ebiten.NewImageFromImage(bundle.Mouths)
+		g.mouthFrames = horizontalImageFrames(ebiten.NewImageFromImage(bundle.Mouths), populous.MouthWidth, populous.MouthHeight)
 	}
+	g.panel = ebiten.NewImage(populous.ScreenWidth, populous.UIStripe)
+	g.panel.Fill(color.RGBA{8, 8, 8, 245})
+	g.frameCache = ebiten.NewImage(logicalWidth, logicalHeight)
+	g.miniMap = ebiten.NewImage(miniMapWidth, miniMapHeight)
+	g.miniPixels = make([]byte, miniMapWidth*miniMapHeight*4)
+	g.miniMapDirty = true
 	g.setLevel(0)
 	return g
 }
 
+func verticalImageFrames(atlas *ebiten.Image, frameWidth, frameHeight int) []*ebiten.Image {
+	if atlas == nil || frameWidth <= 0 || frameHeight <= 0 || atlas.Bounds().Dx() < frameWidth {
+		return nil
+	}
+	count := atlas.Bounds().Dy() / frameHeight
+	frames := make([]*ebiten.Image, 0, count)
+	for frame := 0; frame < count; frame++ {
+		src := image.Rect(0, frame*frameHeight, frameWidth, (frame+1)*frameHeight)
+		frames = append(frames, atlas.SubImage(src).(*ebiten.Image))
+	}
+	return frames
+}
+
+func horizontalImageFrames(atlas *ebiten.Image, frameWidth, frameHeight int) []*ebiten.Image {
+	if atlas == nil || frameWidth <= 0 || frameHeight <= 0 || atlas.Bounds().Dy() < frameHeight {
+		return nil
+	}
+	count := atlas.Bounds().Dx() / frameWidth
+	frames := make([]*ebiten.Image, 0, count)
+	for frame := 0; frame < count; frame++ {
+		src := image.Rect(frame*frameWidth, 0, (frame+1)*frameWidth, frameHeight)
+		frames = append(frames, atlas.SubImage(src).(*ebiten.Image))
+	}
+	return frames
+}
+
 func (g *Game) Update() error {
 	g.tick++
+	g.miniMapDirty = true
 	if g.sound != nil {
 		g.sound.Update()
 	}
@@ -405,7 +440,8 @@ func (g *Game) updateHeartbeat() {
 		g.sound.ResetHeartbeat()
 		return
 	}
-	g.sound.SetHeartbeat(g.world.PlayerPopulation(g.player), g.world.PlayerPopulation(g.opponent()))
+	populations := g.world.PlayerPopulations()
+	g.sound.SetHeartbeat(populations[g.player], populations[g.opponent()])
 }
 
 func (g *Game) updateEndState() {
@@ -1443,6 +1479,20 @@ func absInt(value int) int {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	if g.frameCache == nil {
+		g.drawFrame(screen)
+		return
+	}
+	if !g.frameCacheValid || g.frameCacheTick != g.tick || g.frameCacheState != g.state || g.miniMapDirty {
+		g.drawFrame(g.frameCache)
+		g.frameCacheTick = g.tick
+		g.frameCacheState = g.state
+		g.frameCacheValid = true
+	}
+	screen.DrawImage(g.frameCache, nil)
+}
+
+func (g *Game) drawFrame(screen *ebiten.Image) {
 	screen.Fill(color.RGBA{0, 0, 0, 255})
 	switch g.state {
 	case StateTitle:
@@ -1478,6 +1528,7 @@ func (g *Game) setLevel(index int) {
 		index = len(g.bundle.Levels) - 1
 	}
 	g.levelIndex = index
+	g.miniMapDirty = true
 	g.tutorialActive = false
 	g.tutorialPaused = false
 	g.viewFight = 0
@@ -2094,7 +2145,7 @@ func (g *Game) levelCode(index int) string {
 }
 
 func (g *Game) drawLordMouth(screen *ebiten.Image) {
-	if g.mouths == nil {
+	if len(g.mouthFrames) == 0 {
 		return
 	}
 	g.drawLordMouthFrame(screen, 9*16, 135, g.lordMouthFrame())
@@ -2112,14 +2163,13 @@ func (g *Game) lordMouthFrame() int {
 }
 
 func (g *Game) drawLordMouthFrame(screen *ebiten.Image, x, y, frame int) {
-	frame = clampInt(frame, 0, populous.MouthFrames-1)
-	src := image.Rect(frame*populous.MouthWidth, 0, (frame+1)*populous.MouthWidth, populous.MouthHeight)
-	if src.Max.X > g.mouths.Bounds().Dx() || src.Max.Y > g.mouths.Bounds().Dy() {
+	frame = clampInt(frame, 0, len(g.mouthFrames)-1)
+	if frame < 0 || frame >= len(g.mouthFrames) {
 		return
 	}
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(float64(x), float64(y))
-	screen.DrawImage(g.mouths.SubImage(src).(*ebiten.Image), op)
+	screen.DrawImage(g.mouthFrames[frame], op)
 }
 
 func (g *Game) drawTutorialOverlay(screen *ebiten.Image) {
@@ -2181,7 +2231,7 @@ func (g *Game) drawInterfaceGauges(screen *ebiten.Image) {
 }
 
 func (g *Game) drawManaGauge(screen *ebiten.Image) {
-	if g.sprites == nil || g.world == nil {
+	if len(g.spriteFrames) == 0 || g.world == nil {
 		return
 	}
 	x, y := manaGaugePosition(g.world.Magnets[g.player].Mana)
@@ -2213,8 +2263,9 @@ func (g *Game) drawPopulationGauges(screen *ebiten.Image) {
 	if g.world == nil {
 		return
 	}
-	drawInterfaceBar(screen, 32, 31, 32, populationGaugeHeight(g.world.PlayerPopulation(populous.GodPlayer)), 15)
-	drawInterfaceBar(screen, 39, 31, 32, populationGaugeHeight(g.world.PlayerPopulation(populous.DevilPlayer)), 8)
+	populations := g.world.PlayerPopulations()
+	drawInterfaceBar(screen, 32, 31, 32, populationGaugeHeight(populations[populous.GodPlayer]), 15)
+	drawInterfaceBar(screen, 39, 31, 32, populationGaugeHeight(populations[populous.DevilPlayer]), 8)
 }
 
 type viewedPeepBar struct {
@@ -2223,7 +2274,7 @@ type viewedPeepBar struct {
 }
 
 func (g *Game) drawViewedPeepStatus(screen *ebiten.Image) {
-	if g.sprites == nil || !g.validViewedPeep(g.viewPeep) {
+	if len(g.spriteFrames) == 0 || !g.validViewedPeep(g.viewPeep) {
 		return
 	}
 	peep := g.world.Peeps[g.viewPeep]
@@ -2366,11 +2417,12 @@ func (g *Game) statusLine() string {
 	}
 	audioState := "M/E"
 	if g.sound != nil {
-		if !g.sound.MusicEnabled() && !g.sound.EffectsEnabled() {
+		musicEnabled, effectsEnabled := g.sound.EnabledState()
+		if !musicEnabled && !effectsEnabled {
 			audioState = "--"
-		} else if !g.sound.MusicEnabled() {
+		} else if !musicEnabled {
 			audioState = "-/E"
-		} else if !g.sound.EffectsEnabled() {
+		} else if !effectsEnabled {
 			audioState = "M/-"
 		}
 	}
@@ -2385,7 +2437,7 @@ func (g *Game) playerCanSculptView(player byte) bool {
 }
 
 func (g *Game) drawAtlasPreview(screen *ebiten.Image) {
-	if len(g.lands) == 0 {
+	if len(g.landFrames) == 0 {
 		return
 	}
 	tileW := populous.BlockWidth
@@ -2395,54 +2447,48 @@ func (g *Game) drawAtlasPreview(screen *ebiten.Image) {
 	if g.world != nil {
 		land = g.world.Terrain
 	}
-	if land < 0 || land >= len(g.lands) {
+	if land < 0 || land >= len(g.landFrames) {
 		land = 0
 	}
-	for i := 0; i < populous.BlocksPerLand; i++ {
-		src := image.Rect(0, i*tileH, tileW, i*tileH+tileH)
-		if src.Max.Y > g.lands[land].Bounds().Dy() {
-			return
-		}
+	for i, frame := range g.landFrames[land] {
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Translate(float64((i%cols)*tileW), float64((i/cols)*tileH))
-		screen.DrawImage(g.lands[land].SubImage(src).(*ebiten.Image), op)
+		screen.DrawImage(frame, op)
 	}
-	if g.sprites != nil {
-		for i := 0; i < 20; i++ {
-			src := image.Rect(0, i*populous.SpriteHeight, populous.SpriteWidth, i*populous.SpriteHeight+populous.SpriteHeight)
-			if src.Max.Y > g.sprites.Bounds().Dy() {
-				break
-			}
+	if len(g.spriteFrames) > 0 {
+		limit := min(20, len(g.spriteFrames))
+		for i, frame := range g.spriteFrames[:limit] {
 			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Reset()
 			op.GeoM.Translate(float64(i*populous.SpriteWidth), 168)
-			screen.DrawImage(g.sprites.SubImage(src).(*ebiten.Image), op)
+			screen.DrawImage(frame, op)
 		}
 	}
-	if g.bigSprites != nil {
-		for i := 0; i < 10; i++ {
-			src := image.Rect(0, i*populous.BigSpriteHeight, populous.BigSpriteWidth, i*populous.BigSpriteHeight+populous.BigSpriteHeight)
-			if src.Max.Y > g.bigSprites.Bounds().Dy() {
-				break
-			}
+	if len(g.bigSpriteFrames) > 0 {
+		limit := min(10, len(g.bigSpriteFrames))
+		for i, frame := range g.bigSpriteFrames[:limit] {
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Translate(float64(i*populous.BigSpriteWidth), 184)
-			screen.DrawImage(g.bigSprites.SubImage(src).(*ebiten.Image), op)
+			screen.DrawImage(frame, op)
 		}
 	}
 }
 
 func (g *Game) drawMiniMap(screen *ebiten.Image) {
-	if g.world == nil {
+	if g.world == nil || g.miniMap == nil {
 		return
 	}
-	if g.miniMap == nil {
-		g.miniMap = ebiten.NewImage(miniMapWidth, miniMapHeight)
-		g.miniPixels = make([]byte, miniMapWidth*miniMapHeight*4)
+	if g.miniMapDirty {
+		g.rebuildMiniMap()
 	}
-	for i := range g.miniPixels {
-		g.miniPixels[i] = 0
+	screen.DrawImage(g.miniMap, nil)
+	if len(g.spriteFrames) > 0 {
+		x, y := populous.MiniMapViewportCrosshairPosition(g.xoff, g.yoff)
+		g.drawSpriteFrame(screen, x, y, populous.CrosshairSprite)
 	}
+}
+
+func (g *Game) rebuildMiniMap() {
+	clear(g.miniPixels)
 
 	for y := 0; y < populous.MapHeight; y++ {
 		for x := 0; x < populous.MapWidth; x++ {
@@ -2465,12 +2511,8 @@ func (g *Game) drawMiniMap(screen *ebiten.Image) {
 	if magnet := g.world.Magnets[g.player].GoTo; magnet >= 0 && magnet < populous.MapWidth*populous.MapHeight {
 		putMiniPixel(g.miniPixels, magnet%populous.MapWidth, magnet/populous.MapWidth, populous.Palette(10, 0))
 	}
-	g.miniMap.ReplacePixels(g.miniPixels)
-	screen.DrawImage(g.miniMap, nil)
-	if g.sprites != nil {
-		x, y := populous.MiniMapViewportCrosshairPosition(g.xoff, g.yoff)
-		g.drawSpriteFrame(screen, x, y, populous.CrosshairSprite)
-	}
+	g.miniMap.WritePixels(g.miniPixels)
+	g.miniMapDirty = false
 }
 
 func (g *Game) miniMapColor(pos int) color.RGBA {
@@ -2524,12 +2566,10 @@ func (g *Game) mapColorIndex(block int) int {
 }
 
 func putMiniPixel(pixels []byte, mapX, mapY int, c color.RGBA) {
-	screenX := 64 + mapX - mapY
-	screenY := (mapX + mapY) >> 1
-	if screenX < 0 || screenX >= miniMapWidth || screenY < 0 || screenY >= miniMapHeight {
+	offset, ok := populous.MiniMapPixelOffset(mapX, mapY)
+	if !ok {
 		return
 	}
-	offset := (screenY*miniMapWidth + screenX) * 4
 	pixels[offset+0] = c.R
 	pixels[offset+1] = c.G
 	pixels[offset+2] = c.B
@@ -2538,7 +2578,7 @@ func putMiniPixel(pixels []byte, mapX, mapY int, c color.RGBA) {
 
 func (g *Game) drawWorld(screen *ebiten.Image) {
 	land := g.world.Terrain
-	if land < 0 || land >= len(g.lands) {
+	if land < 0 || land >= len(g.landFrames) {
 		return
 	}
 	for y := 0; y < 8; y++ {
@@ -2549,16 +2589,16 @@ func (g *Game) drawWorld(screen *ebiten.Image) {
 			if block == populous.WaterBlock && g.tick%2 == 0 {
 				block = 16
 			}
-			g.drawBlock(screen, g.lands[land], x, y, altitude, block)
+			g.drawBlock(screen, land, x, y, altitude, block)
 			if overlay := int(g.world.MapBk2[pos]); overlay != 0 {
-				g.drawBlock(screen, g.lands[land], x, y, altitude+8, overlay)
+				g.drawBlock(screen, land, x, y, altitude+8, overlay)
 			}
 			devilTarget, godTarget := g.magnetTargetsAt(pos)
 			if devilTarget {
-				g.drawBlock(screen, g.lands[land], x, y, altitude+8, populous.DevilsMagnetBlock)
+				g.drawBlock(screen, land, x, y, altitude+8, populous.DevilsMagnetBlock)
 			}
 			if godTarget {
-				g.drawBlock(screen, g.lands[land], x, y, altitude+8, populous.GodsMagnetBlock)
+				g.drawBlock(screen, land, x, y, altitude+8, populous.GodsMagnetBlock)
 			}
 		}
 	}
@@ -2575,15 +2615,14 @@ func (g *Game) magnetTargetsAt(pos int) (devil, god bool) {
 		g.world.Magnets[populous.GodPlayer].GoTo == pos
 }
 
-func (g *Game) drawBlock(screen *ebiten.Image, atlas *ebiten.Image, x, y, z, block int) {
-	if block < 0 || block >= populous.BlocksPerLand {
+func (g *Game) drawBlock(screen *ebiten.Image, land, x, y, z, block int) {
+	if land < 0 || land >= len(g.landFrames) || block < 0 || block >= len(g.landFrames[land]) {
 		return
 	}
 	dstX, dstY := blockScreenPosition(x, y, z)
-	src := image.Rect(0, block*populous.BlockHeight, populous.BlockWidth, (block+1)*populous.BlockHeight)
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(float64(dstX), float64(dstY))
-	screen.DrawImage(atlas.SubImage(src).(*ebiten.Image), op)
+	screen.DrawImage(g.landFrames[land][block], op)
 }
 
 func blockScreenPosition(x, y, z int) (int, int) {
@@ -2601,7 +2640,7 @@ func blockScreenPosition(x, y, z int) (int, int) {
 }
 
 func (g *Game) drawSideWalls(screen *ebiten.Image) {
-	if g.sprites == nil {
+	if len(g.spriteFrames) == 0 {
 		return
 	}
 	for i := 0; i < 8; i++ {
@@ -2618,7 +2657,7 @@ func (g *Game) drawSideWalls(screen *ebiten.Image) {
 }
 
 func (g *Game) drawHoverCursor(screen *ebiten.Image) {
-	if g.sprites == nil || !g.hoverOK {
+	if len(g.spriteFrames) == 0 || !g.hoverOK {
 		return
 	}
 	pos := g.hoverX + g.hoverY*populous.MapWidth
@@ -2637,7 +2676,7 @@ func (g *Game) drawHoverCursor(screen *ebiten.Image) {
 }
 
 func (g *Game) drawVisiblePeeps(screen *ebiten.Image) {
-	if g.sprites == nil {
+	if len(g.spriteFrames) == 0 {
 		return
 	}
 	for y := 0; y < 8; y++ {
@@ -2824,21 +2863,21 @@ func (g *Game) drawFixedSprite(screen *ebiten.Image, x, y, z, frame int) {
 }
 
 func (g *Game) drawSpriteFrame(screen *ebiten.Image, dstX, dstY, frame int) {
-	if frame < 0 || frame*populous.SpriteHeight >= g.sprites.Bounds().Dy() {
+	if frame < 0 || frame >= len(g.spriteFrames) {
 		return
 	}
-	src := image.Rect(0, frame*populous.SpriteHeight, populous.SpriteWidth, (frame+1)*populous.SpriteHeight)
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(float64(dstX), float64(dstY))
-	screen.DrawImage(g.sprites.SubImage(src).(*ebiten.Image), op)
+	screen.DrawImage(g.spriteFrames[frame], op)
 }
 
 func (g *Game) drawPanel(screen *ebiten.Image) {
-	panel := ebiten.NewImage(populous.ScreenWidth, populous.UIStripe)
-	panel.Fill(color.RGBA{8, 8, 8, 245})
+	if g.panel == nil {
+		return
+	}
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(0, populous.ScreenHeight)
-	screen.DrawImage(panel, op)
+	screen.DrawImage(g.panel, op)
 }
 
 func drawRequester(screen *ebiten.Image, x, y, width, height float64) {

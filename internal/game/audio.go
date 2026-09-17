@@ -174,6 +174,15 @@ func (p *soundPlayer) EffectsEnabled() bool {
 	return p.effectsEnabled
 }
 
+func (p *soundPlayer) EnabledState() (music, effects bool) {
+	if p == nil {
+		return false, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.musicEnabled, p.effectsEnabled
+}
+
 func (p *soundPlayer) delayMusicForEffect() {
 	if p == nil {
 		return
