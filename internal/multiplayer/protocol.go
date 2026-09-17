@@ -4,22 +4,26 @@ package multiplayer
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"sync"
 
 	"go-populous/internal/populous"
 )
 
 const (
 	// ProtocolVersion covers both the frame header and all JSON payload schemas.
-	ProtocolVersion uint16 = 1
+	ProtocolVersion uint16 = 2
 
-	// MaxFramePayload bounds allocations before decoding data supplied by a
-	// remote peer. A full WorldSnapshot is comfortably below this limit.
-	MaxFramePayload = 2 << 20
+	// MaxFramePayload bounds bytes allocated directly from an announced wire
+	// length. Start and Snapshot have a separate decompressed limit below.
+	MaxFramePayload    = 256 << 10
+	MaxSnapshotPayload = 512 << 10
 
 	MaxCommandsPerBatch = 64
 	MaxFutureTicks      = 64
@@ -43,6 +47,29 @@ var (
 )
 
 const frameHeaderSize = 12
+
+const frameFlagGZIP byte = 1 << 0
+
+const (
+	maxHelloPayload      = 512
+	maxWelcomePayload    = 512
+	maxIntentPayload     = 512
+	maxBatchPayload      = 32 << 10
+	maxStateHashPayload  = 512
+	maxErrorPayload      = 1 << 10
+	maxHeartbeatPayload  = 256
+	maxDisconnectPayload = 1 << 10
+)
+
+var snapshotGZIPWriters = sync.Pool{
+	New: func() any {
+		writer, err := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		if err != nil {
+			panic(err)
+		}
+		return writer
+	},
+}
 
 type MessageType uint8
 
@@ -225,25 +252,44 @@ func WriteMessage(writer io.Writer, message WireMessage) error {
 	if err := validateMessage(message); err != nil {
 		return err
 	}
+	typ := message.messageType()
+	wireLimit, decodedLimit, err := messagePayloadLimits(typ)
+	if err != nil {
+		return err
+	}
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", message.messageType(), err)
+		return fmt.Errorf("encode %s: %w", typ, err)
 	}
-	if len(payload) > MaxFramePayload {
-		return fmt.Errorf("%w: %d bytes", ErrFrameTooLarge, len(payload))
+	if len(payload) > decodedLimit {
+		return fmt.Errorf("%w: decoded %s payload is %d bytes, maximum %d", ErrFrameTooLarge, typ, len(payload), decodedLimit)
+	}
+
+	flags := byte(0)
+	if messageUsesCompression(typ) {
+		payload, err = compressSnapshotPayload(payload)
+		if err != nil {
+			return fmt.Errorf("compress %s: %w", typ, err)
+		}
+		flags = frameFlagGZIP
+	}
+	if len(payload) > wireLimit {
+		return fmt.Errorf("%w: encoded %s payload is %d bytes, maximum %d", ErrFrameTooLarge, typ, len(payload), wireLimit)
 	}
 
 	var header [frameHeaderSize]byte
 	copy(header[:4], frameMagic[:])
 	binary.BigEndian.PutUint16(header[4:6], ProtocolVersion)
-	header[6] = byte(message.messageType())
-	// header[7] is reserved and must remain zero in protocol version 1.
+	header[6] = byte(typ)
+	header[7] = flags
 	binary.BigEndian.PutUint32(header[8:12], uint32(len(payload)))
-	if err := writeFull(writer, header[:]); err != nil {
-		return fmt.Errorf("write multiplayer header: %w", err)
+	buffers := net.Buffers{header[:], payload}
+	written, err := buffers.WriteTo(writer)
+	if err != nil {
+		return fmt.Errorf("write multiplayer frame: %w", err)
 	}
-	if err := writeFull(writer, payload); err != nil {
-		return fmt.Errorf("write multiplayer payload: %w", err)
+	if written != int64(len(header)+len(payload)) {
+		return fmt.Errorf("write multiplayer frame: %w", io.ErrShortWrite)
 	}
 	return nil
 }
@@ -265,23 +311,37 @@ func ReadMessage(reader io.Reader) (WireMessage, error) {
 	if version != ProtocolVersion {
 		return nil, fmt.Errorf("%w: got %d, want %d", ErrVersionMismatch, version, ProtocolVersion)
 	}
-	if header[7] != 0 {
-		return nil, fmt.Errorf("%w: reserved header byte is non-zero", ErrBadFrame)
-	}
 	typ := MessageType(header[6])
-	message, err := newMessage(typ)
+	wireLimit, decodedLimit, err := messagePayloadLimits(typ)
 	if err != nil {
 		return nil, err
 	}
+	flags := header[7]
+	if err := validateFrameFlags(typ, flags); err != nil {
+		return nil, err
+	}
 	length := binary.BigEndian.Uint32(header[8:12])
-	if length > MaxFramePayload {
-		return nil, fmt.Errorf("%w: %d bytes", ErrFrameTooLarge, length)
+	if uint64(length) > uint64(wireLimit) {
+		return nil, fmt.Errorf("%w: encoded %s payload is %d bytes, maximum %d", ErrFrameTooLarge, typ, length, wireLimit)
 	}
 	payload := make([]byte, int(length))
 	if _, err := io.ReadFull(reader, payload); err != nil {
 		return nil, err
 	}
 
+	if flags&frameFlagGZIP != 0 {
+		payload, err = decompressSnapshotPayload(payload, decodedLimit)
+		if err != nil {
+			return nil, fmt.Errorf("decompress %s: %w", typ, err)
+		}
+	} else if len(payload) > decodedLimit {
+		return nil, fmt.Errorf("%w: decoded %s payload is %d bytes, maximum %d", ErrFrameTooLarge, typ, len(payload), decodedLimit)
+	}
+
+	message, err := newMessage(typ)
+	if err != nil {
+		return nil, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(message); err != nil {
@@ -438,8 +498,8 @@ func validateWelcome(message Welcome) error {
 	if message.AssignedPlayer != populous.GodPlayer && message.AssignedPlayer != populous.DevilPlayer {
 		return fmt.Errorf("%w: assigned player %d", ErrInvalidMessage, message.AssignedPlayer)
 	}
-	if message.TickRate == 0 || message.TickRate > 240 {
-		return fmt.Errorf("%w: tick rate %d", ErrInvalidMessage, message.TickRate)
+	if message.TickRate != DefaultTickRate {
+		return fmt.Errorf("%w: tick rate %d, want %d", ErrInvalidMessage, message.TickRate, DefaultTickRate)
 	}
 	if message.InputDelay > MaxFutureTicks {
 		return fmt.Errorf("%w: input delay %d", ErrInvalidMessage, message.InputDelay)
@@ -514,16 +574,75 @@ func validateText(name, value string, maximum int) error {
 	return nil
 }
 
-func writeFull(writer io.Writer, data []byte) error {
-	for len(data) > 0 {
-		written, err := writer.Write(data)
-		if err != nil {
-			return err
-		}
-		if written <= 0 {
-			return io.ErrShortWrite
-		}
-		data = data[written:]
+func messageUsesCompression(typ MessageType) bool {
+	return typ == MessageStart || typ == MessageSnapshot
+}
+
+func validateFrameFlags(typ MessageType, flags byte) error {
+	if flags&^frameFlagGZIP != 0 {
+		return fmt.Errorf("%w: unsupported frame flags %#x", ErrBadFrame, flags)
+	}
+	compressed := flags&frameFlagGZIP != 0
+	if compressed != messageUsesCompression(typ) {
+		return fmt.Errorf("%w: invalid compression flag for %s", ErrBadFrame, typ)
 	}
 	return nil
+}
+
+func messagePayloadLimits(typ MessageType) (wire, decoded int, err error) {
+	switch typ {
+	case MessageHello:
+		return maxHelloPayload, maxHelloPayload, nil
+	case MessageWelcome:
+		return maxWelcomePayload, maxWelcomePayload, nil
+	case MessageStart, MessageSnapshot:
+		return MaxFramePayload, MaxSnapshotPayload, nil
+	case MessageIntent:
+		return maxIntentPayload, maxIntentPayload, nil
+	case MessageBatch:
+		return maxBatchPayload, maxBatchPayload, nil
+	case MessageStateHash:
+		return maxStateHashPayload, maxStateHashPayload, nil
+	case MessageError:
+		return maxErrorPayload, maxErrorPayload, nil
+	case MessagePing, MessagePong:
+		return maxHeartbeatPayload, maxHeartbeatPayload, nil
+	case MessageDisconnect:
+		return maxDisconnectPayload, maxDisconnectPayload, nil
+	default:
+		return 0, 0, fmt.Errorf("%w: type %d", ErrUnknownMessage, typ)
+	}
+}
+
+func compressSnapshotPayload(payload []byte) ([]byte, error) {
+	var compressed bytes.Buffer
+	writer := snapshotGZIPWriters.Get().(*gzip.Writer)
+	writer.Reset(&compressed)
+	defer func() {
+		writer.Reset(io.Discard)
+		snapshotGZIPWriters.Put(writer)
+	}()
+	if _, err := writer.Write(payload); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return compressed.Bytes(), nil
+}
+
+func decompressSnapshotPayload(payload []byte, limit int) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(decoded) > limit {
+		return nil, fmt.Errorf("%w: decompressed payload exceeds %d bytes", ErrFrameTooLarge, limit)
+	}
+	return decoded, nil
 }

@@ -1,6 +1,9 @@
 package populous
 
-import "testing"
+import (
+	"image"
+	"testing"
+)
 
 func TestCursorSpriteMatchesOriginalPlacementPointers(t *testing.T) {
 	tests := []struct {
@@ -19,6 +22,28 @@ func TestCursorSpriteMatchesOriginalPlacementPointers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := CursorSprite(tt.mode, tt.player); got != tt.want {
 				t.Fatalf("CursorSprite(%d, %d) = %d, want %d", tt.mode, tt.player, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMiniMapPixelOffset(t *testing.T) {
+	tests := []struct {
+		name       string
+		mapX, mapY int
+		want       int
+		ok         bool
+	}{
+		{name: "north corner", mapX: 0, mapY: 0, want: 64 * 4, ok: true},
+		{name: "east corner", mapX: MapWidth - 1, mapY: 0, want: (31*MiniMapWidth + 127) * 4, ok: true},
+		{name: "south corner", mapX: MapWidth - 1, mapY: MapHeight - 1, want: (63*MiniMapWidth + 64) * 4, ok: true},
+		{name: "outside", mapX: MapWidth, mapY: 0, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := MiniMapPixelOffset(tt.mapX, tt.mapY)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("MiniMapPixelOffset(%d, %d) = (%d, %t), want (%d, %t)", tt.mapX, tt.mapY, got, ok, tt.want, tt.ok)
 			}
 		})
 	}
@@ -120,5 +145,55 @@ func TestDecodeMouthsPlanarFrames(t *testing.T) {
 	}
 	if got := img.RGBAAt(frame*MouthWidth, 0); got != Palette(2, 1) {
 		t.Fatalf("decoded mouth pixel = %#v, want palette 2 from lord palette", got)
+	}
+}
+
+var benchmarkDecodedImage *image.RGBA
+
+func BenchmarkDecodeChunkyScreen4BPP(b *testing.B) {
+	data := make([]byte, ScreenWidth*ScreenHeight/2)
+	fillBenchmarkGraphicsData(data)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var err error
+		benchmarkDecodedImage, err = DecodeChunkyScreen4BPP(data, ScreenWidth, ScreenHeight, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDecodeAmigaScreen4BPP(b *testing.B) {
+	data := make([]byte, ScreenWidth*ScreenHeight/2)
+	fillBenchmarkGraphicsData(data)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var err error
+		benchmarkDecodedImage, err = DecodeAmigaScreen4BPP(data, ScreenWidth, ScreenHeight, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDecodePlanarMaskedSprites(b *testing.B) {
+	data := make([]byte, 23520)
+	fillBenchmarkGraphicsData(data)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var err error
+		benchmarkDecodedImage, err = DecodePlanarMasked(data, SpriteWidth, true, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func fillBenchmarkGraphicsData(data []byte) {
+	for i := range data {
+		data[i] = byte(i*31 + 7)
 	}
 }

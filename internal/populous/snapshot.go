@@ -62,6 +62,12 @@ func WorldFromSnapshot(snapshot WorldSnapshot, rules TerrainRules) *World {
 	if terrain < 0 || terrain > 3 {
 		terrain = 0
 	}
+	peepCapacity := MaxPeeps
+	if len(snapshot.Peeps) > peepCapacity {
+		peepCapacity = len(snapshot.Peeps)
+	}
+	peeps := make([]Peep, len(snapshot.Peeps), peepCapacity)
+	copy(peeps, snapshot.Peeps)
 	world := &World{
 		Level:              snapshot.Level,
 		Rules:              rules,
@@ -73,7 +79,7 @@ func WorldFromSnapshot(snapshot WorldSnapshot, rules TerrainRules) *World {
 		MapBk2:             snapshot.MapBk2,
 		MapWho:             snapshot.MapWho,
 		MapSteps:           snapshot.MapSteps,
-		Peeps:              append([]Peep(nil), snapshot.Peeps...),
+		Peeps:              peeps,
 		Magnets:            snapshot.Magnets,
 		Computer:           snapshot.Computer,
 		ComputerControlled: snapshot.ComputerControlled,

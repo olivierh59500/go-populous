@@ -12,6 +12,8 @@ const (
 	ScreenWidth     = 320
 	ScreenHeight    = 200
 	UIStripe        = 40
+	MiniMapWidth    = 128
+	MiniMapHeight   = 64
 	MouthWidth      = 48
 	MouthHeight     = 35
 	MouthFrames     = 6
@@ -22,8 +24,6 @@ const (
 	BigSpriteWidth  = 16
 	BigSpriteHeight = 32
 )
-
-var transparentPixel = color.RGBA{}
 
 type CursorMode uint8
 
@@ -50,6 +50,20 @@ func CursorSprite(mode CursorMode, player int) int {
 	return CrosshairSprite
 }
 
+// MiniMapPixelOffset projects one map tile into the original 128x64 minimap
+// pixel buffer and returns its RGBA byte offset.
+func MiniMapPixelOffset(mapX, mapY int) (int, bool) {
+	if mapX < 0 || mapX >= MapWidth || mapY < 0 || mapY >= MapHeight {
+		return 0, false
+	}
+	screenX := 64 + mapX - mapY
+	screenY := (mapX + mapY) >> 1
+	if screenX < 0 || screenX >= MiniMapWidth || screenY < 0 || screenY >= MiniMapHeight {
+		return 0, false
+	}
+	return (screenY*MiniMapWidth + screenX) * 4, true
+}
+
 // MiniMapViewportCrosshairPosition returns the original screen coordinates for
 // the crosshair marking the centre of the 8x8 world viewport on the minimap.
 func MiniMapViewportCrosshairPosition(xoff, yoff int) (int, int) {
@@ -73,10 +87,8 @@ func DecodeChunkyScreen4BPP(data []byte, width, height int, paletteVariant int) 
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	pixel := 0
 	for _, b := range data[:need] {
-		for _, idx := range []byte{b & 0x0f, b >> 4} {
-			x := pixel % width
-			y := pixel / width
-			img.SetRGBA(x, y, Palette(int(idx), paletteVariant))
+		for _, index := range [...]byte{b & 0x0f, b >> 4} {
+			writeRGBAPixel(img, pixel*4, Palette(int(index), paletteVariant))
 			pixel++
 		}
 	}
@@ -129,7 +141,8 @@ func DecodeAmigaScreen4BPP(data []byte, width, height int, paletteVariant int) (
 				index |= int(((planes[1] >> bit) & 1) << 1)
 				index |= int(((planes[2] >> bit) & 1) << 2)
 				index |= int(((planes[3] >> bit) & 1) << 3)
-				img.SetRGBA(xByte*8+(7-bit), y, Palette(index, paletteVariant))
+				x := xByte*8 + (7 - bit)
+				writeRGBAPixel(img, y*img.Stride+x*4, Palette(index, paletteVariant))
 			}
 		}
 	}
@@ -152,7 +165,6 @@ func DecodePlanarMasked(data []byte, width int, hasMask bool, paletteVariant int
 
 	height := len(data) / chunkSize
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), image.Transparent, image.Point{}, draw.Src)
 
 	offset := 0
 	for y := 0; y < height; y++ {
@@ -175,15 +187,21 @@ func DecodePlanarMasked(data []byte, width int, hasMask bool, paletteVariant int
 		for x := 0; x < width; x++ {
 			bit := width - 1 - x
 			if hasMask && ((mask>>bit)&1) != 0 {
-				img.SetRGBA(x, y, transparentPixel)
 				continue
 			}
 			index := int(((planes[3] >> bit) & 1) << 3)
 			index |= int(((planes[2] >> bit) & 1) << 2)
 			index |= int(((planes[1] >> bit) & 1) << 1)
 			index |= int((planes[0] >> bit) & 1)
-			img.SetRGBA(x, y, Palette(index, paletteVariant))
+			writeRGBAPixel(img, y*img.Stride+x*4, Palette(index, paletteVariant))
 		}
 	}
 	return img, nil
+}
+
+func writeRGBAPixel(img *image.RGBA, offset int, c color.RGBA) {
+	img.Pix[offset+0] = c.R
+	img.Pix[offset+1] = c.G
+	img.Pix[offset+2] = c.B
+	img.Pix[offset+3] = c.A
 }
