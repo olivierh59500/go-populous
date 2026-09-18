@@ -2,6 +2,7 @@ package game
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -12,12 +13,14 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"go-populous/internal/assets"
+	"go-populous/internal/fixedstep"
 	"go-populous/internal/populous"
 )
 
 const (
 	logicalWidth  = 320
 	logicalHeight = 240
+	simulationTPS = 8
 	miniMapWidth  = populous.MiniMapWidth
 	miniMapHeight = populous.MiniMapHeight
 	saveVersion   = 2
@@ -25,6 +28,11 @@ const (
 
 	temporaryViewTicks = 10
 )
+
+// ErrSaveUnavailable is returned when the platform has not provided a
+// writable, persistent save location. Android supplies one from its files
+// directory before the game loop starts.
+var ErrSaveUnavailable = errors.New("save storage unavailable")
 
 var manaGaugeValues = [...]int{
 	populous.ManaFloor,
@@ -177,6 +185,9 @@ type Game struct {
 	state              State
 	atlasView          bool
 	fullscreen         bool
+	layoutWidth        int
+	updateScheduler    *fixedstep.Scheduler
+	touch              touchInputState
 	images             map[string]*ebiten.Image
 	landFrames         [][]*ebiten.Image
 	spriteFrames       []*ebiten.Image
@@ -225,7 +236,10 @@ type Game struct {
 	endScore           int
 	endNextLevel       int
 	tick               int
+	savePath           string
 	world              *populous.World
+	soundBank          *populous.SoundBank
+	audioInitialized   bool
 	sound              *soundPlayer
 	network            *networkGame
 }
@@ -233,13 +247,16 @@ type Game struct {
 func New(bundle *assets.Bundle) *Game {
 	g := &Game{
 		bundle:             bundle,
+		layoutWidth:        logicalWidth,
+		updateScheduler:    fixedstep.New(simulationTPS, simulationTPS),
 		images:             map[string]*ebiten.Image{},
 		player:             populous.GodPlayer,
 		computerControlled: [2]bool{false, true},
 		titleMenuCursor:    titleConquest,
 		viewPeep:           -1,
 		oldViewPeep:        -1,
-		sound:              newSoundPlayer(bundle.SoundBank),
+		savePath:           saveFileName,
+		soundBank:          bundle.SoundBank,
 	}
 	for name, img := range bundle.Screens {
 		g.images[name] = ebiten.NewImageFromImage(img)
@@ -264,6 +281,28 @@ func New(bundle *assets.Bundle) *Game {
 	g.miniMapDirty = true
 	g.setLevel(0)
 	return g
+}
+
+// SetSavePath selects the file used by SAVE and LOAD. Passing an empty path
+// explicitly disables persistence, which lets mobile frontends fail cleanly
+// when the platform does not provide a writable files directory. It should be
+// called before the game loop starts.
+func (g *Game) SetSavePath(path string) {
+	g.savePath = path
+}
+
+// SetUpdateTPS sets the rate at which Ebitengine calls Update. Populous' game
+// logic remains fixed at simulationTPS; a faster frontend rate is useful on
+// touch devices so short contacts can be sampled and latched reliably.
+func (g *Game) SetUpdateTPS(tps int) {
+	if tps < simulationTPS {
+		tps = simulationTPS
+	}
+	if g.updateScheduler == nil {
+		g.updateScheduler = fixedstep.New(simulationTPS, tps)
+		return
+	}
+	g.updateScheduler.SetUpdateRate(tps)
 }
 
 func verticalImageFrames(atlas *ebiten.Image, frameWidth, frameHeight int) []*ebiten.Image {
@@ -293,6 +332,26 @@ func horizontalImageFrames(atlas *ebiten.Image, frameWidth, frameHeight int) []*
 }
 
 func (g *Game) Update() error {
+	if !g.audioInitialized {
+		g.audioInitialized = true
+		g.sound = newSoundPlayer(g.soundBank)
+		g.soundBank = nil
+	}
+	g.updateTouchInput()
+	if g.updateScheduler == nil {
+		g.updateScheduler = fixedstep.New(simulationTPS, simulationTPS)
+	}
+	steps := g.updateScheduler.Advance()
+	for range steps {
+		g.touch.prepareStep()
+		if err := g.updateTick(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Game) updateTick() error {
 	g.tick++
 	g.miniMapDirty = true
 	if g.sound != nil {
@@ -301,6 +360,9 @@ func (g *Game) Update() error {
 	if inpututil.IsKeyJustPressed(ebiten.KeyF) {
 		g.fullscreen = !g.fullscreen
 		ebiten.SetFullscreen(g.fullscreen)
+	}
+	if g.handleTouchInput() {
+		return nil
 	}
 
 	switch g.state {
@@ -578,7 +640,7 @@ func (g *Game) handleTitleInput() {
 		}
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		x, y := ebiten.CursorPosition()
+		x, y := g.cursorPosition()
 		if index, ok := titleMenuItemAt(x, y); ok {
 			g.titleMenuCursor = index
 			g.activateTitleMenu(index)
@@ -744,7 +806,7 @@ func (g *Game) handleSetupInput() {
 		g.activateSetupItem(g.setupCursor)
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		x, y := ebiten.CursorPosition()
+		x, y := g.cursorPosition()
 		if index, ok := setupItemAt(x, y); ok {
 			g.setupCursor = index
 			g.activateSetupItem(index)
@@ -868,10 +930,13 @@ func (g *Game) setPlayerSide(player int) {
 }
 
 func (g *Game) saveGameState() error {
+	if g.savePath == "" {
+		return ErrSaveUnavailable
+	}
 	if g.world == nil {
 		return fmt.Errorf("no active world")
 	}
-	file, err := os.Create(saveFileName)
+	file, err := os.Create(g.savePath)
 	if err != nil {
 		return err
 	}
@@ -892,7 +957,10 @@ func (g *Game) saveGameState() error {
 }
 
 func (g *Game) loadGameState() error {
-	file, err := os.Open(saveFileName)
+	if g.savePath == "" {
+		return ErrSaveUnavailable
+	}
+	file, err := os.Open(g.savePath)
 	if err != nil {
 		return err
 	}
@@ -964,7 +1032,7 @@ func (g *Game) handleOptionsInput() {
 		g.toggleOption()
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
-		x, y := ebiten.CursorPosition()
+		x, y := g.cursorPosition()
 		if row, ok := optionRowAt(x, y); ok {
 			g.optionCursor = row
 			if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
@@ -1123,7 +1191,7 @@ func (g *Game) handleTargetPowerInput() bool {
 	if g.world == nil || !g.humanControlsPlayer() || g.atlasView || (g.mode != ModeMagnet && g.mode != ModeSwamp) || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return false
 	}
-	mouseX, mouseY := ebiten.CursorPosition()
+	mouseX, mouseY := g.cursorPosition()
 	if mapX, mapY, ok := miniMapTileAt(mouseX, mouseY); ok {
 		g.applyTargetPower(mapX, mapY)
 		return true
@@ -1144,7 +1212,7 @@ func (g *Game) handlePeepInspectionInput() bool {
 	if !leftPressed && !rightPressed {
 		return false
 	}
-	mouseX, mouseY := ebiten.CursorPosition()
+	mouseX, mouseY := g.cursorPosition()
 	index, ok := g.visiblePeepAt(mouseX, mouseY)
 	if !ok {
 		return false
@@ -1172,7 +1240,7 @@ func (g *Game) handleIconInput() bool {
 	if g.world == nil || g.atlasView {
 		return false
 	}
-	mouseX, mouseY := ebiten.CursorPosition()
+	mouseX, mouseY := g.cursorPosition()
 	iconX, iconY, ok := controlIconAt(mouseX, mouseY)
 	if !ok {
 		return false
@@ -1323,7 +1391,7 @@ func (g *Game) handleMouseNavigation() bool {
 	if g.world == nil || g.atlasView || g.mode == ModeMagnet || g.mode == ModeSwamp || g.mode == ModeInspect || !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		return false
 	}
-	x, y := ebiten.CursorPosition()
+	x, y := g.cursorPosition()
 	if mapX, mapY, ok := miniMapTileAt(x, y); ok {
 		g.centerOnMapTile(mapX, mapY)
 		return true
@@ -1376,7 +1444,7 @@ func (g *Game) updateHoverTile() {
 	if g.world == nil || g.atlasView {
 		return
 	}
-	mouseX, mouseY := ebiten.CursorPosition()
+	mouseX, mouseY := g.pointerPosition()
 	mapX, mapY, localX, localY, ok := g.viewportTileAt(mouseX, mouseY)
 	if !ok {
 		return
@@ -1489,7 +1557,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.frameCacheState = g.state
 		g.frameCacheValid = true
 	}
-	screen.DrawImage(g.frameCache, nil)
+	screen.Fill(color.RGBA{0, 0, 0, 255})
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(float64((screen.Bounds().Dx()-logicalWidth)/2), 0)
+	screen.DrawImage(g.frameCache, op)
+	g.drawTouchControls(screen)
 }
 
 func (g *Game) drawFrame(screen *ebiten.Image) {
@@ -1513,8 +1585,9 @@ func (g *Game) drawFrame(screen *ebiten.Image) {
 	}
 }
 
-func (g *Game) Layout(_, _ int) (int, int) {
-	return logicalWidth, logicalHeight
+func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
+	g.layoutWidth = touchLogicalWidth(outsideWidth, outsideHeight)
+	return g.layoutWidth, logicalHeight
 }
 
 func (g *Game) setLevel(index int) {
