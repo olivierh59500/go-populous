@@ -2,7 +2,10 @@ package assets
 
 import (
 	"image"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"go-populous/internal/populous"
@@ -13,6 +16,63 @@ func TestLoadWithLocalDump(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
+	assertCompleteBundle(t, bundle)
+}
+
+func TestLoadEmbedded(t *testing.T) {
+	bundle, err := LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCompleteBundle(t, bundle)
+	if bundle.AmigaDir != "" || bundle.ExtractedDir != "" {
+		t.Fatalf("embedded bundle exposes host directories: AmigaDir=%q ExtractedDir=%q", bundle.AmigaDir, bundle.ExtractedDir)
+	}
+	if len(bundle.Warnings) != 0 {
+		t.Fatalf("embedded bundle warnings = %q", bundle.Warnings)
+	}
+}
+
+func TestLoadFallsBackToEmbeddedOutsideRepository(t *testing.T) {
+	t.Setenv("POPULOUS_AMIGA_DIR", "")
+	t.Setenv("POPULOUS_EXTRACTED_IMAGE_DIR", "")
+	oldWorkingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWorkingDirectory); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	bundle, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCompleteBundle(t, bundle)
+}
+
+func TestLoadFSRejectsMissingAmigaDirectory(t *testing.T) {
+	if _, err := LoadFS(nil); err == nil {
+		t.Fatal("LoadFS(nil) succeeded")
+	}
+	if _, err := LoadFS(emptyFS{}); err == nil {
+		t.Fatal("LoadFS accepted a filesystem without amiga")
+	}
+}
+
+type emptyFS struct{}
+
+func (emptyFS) Open(string) (fs.File, error) {
+	return nil, fs.ErrNotExist
+}
+
+func assertCompleteBundle(t *testing.T, bundle *Bundle) {
+	t.Helper()
 	if len(bundle.Levels) != 495 {
 		t.Fatalf("len(Levels) = %d, want 495", len(bundle.Levels))
 	}
@@ -81,7 +141,7 @@ func TestAmigaScreenDecodeMatchesExtractedQaz(t *testing.T) {
 		t.Skip(err)
 	}
 	refPath := filepath.Join(bundle.ExtractedDir, "qaz.pic.png")
-	ref, err := loadPNG(refPath)
+	ref, err := loadPNG(os.DirFS(filepath.Dir(refPath)), filepath.Base(refPath))
 	if err != nil {
 		t.Skip(err)
 	}
@@ -105,6 +165,22 @@ func TestAmigaScreenDecodeMatchesExtractedQaz(t *testing.T) {
 	}
 	if diff != 0 {
 		t.Fatalf("decoded qaz differs from extracted PNG by %d total RGB units", diff)
+	}
+}
+
+func TestEmbeddedScreensMatchDesktopScreens(t *testing.T) {
+	desktop, err := Load()
+	if err != nil || desktop.ExtractedDir == "" {
+		t.Skipf("desktop reference images unavailable: %v", err)
+	}
+	embedded, err := LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"qaz", "demo", "lord", "load"} {
+		if !reflect.DeepEqual(embedded.Screens[name], desktop.Screens[name]) {
+			t.Errorf("embedded screen %q differs from desktop screen", name)
+		}
 	}
 }
 

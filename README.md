@@ -60,6 +60,22 @@ go run ./cmd/populous
 
 The game opens a 960x720 window and renders internally at the original 320x240 logical resolution.
 
+### Android / Pixel
+
+The Android build embeds the required Populous data, keeps the original
+320x240 scene centered, and uses the wide landscape side bands for touch
+controls. With one authorized Android device connected over USB, build,
+install, and launch it with:
+
+```sh
+./scripts/run-android.sh
+```
+
+The script pins Ebitengine/ebitenmobile, Gradle, the Android API, NDK, and the
+`arm64-v8a` ABI; it also verifies the APK signature and 16 KiB alignment before
+installation. See [GUIDE_ANDROID_EBITENGINE_PIXEL.md](GUIDE_ANDROID_EBITENGINE_PIXEL.md)
+for the complete toolchain and troubleshooting guide.
+
 ### Multiplayer
 
 Start the host (good side) and choose the world index:
@@ -94,11 +110,20 @@ During an online match, `Esc` leaves the match and returns to the title screen. 
 - `Left` / `Right`: move to the previous or next world.
 - `Inspect icon (6,0)`: left-click a person to pin its shield display; right-click for a temporary view.
 
+On Android, touch the original scene directly to use terrain, minimap, people,
+and interface icons. The left D-pad scrolls the world. `RAISE` is the default
+terrain action; hold `LOWER` with one finger and touch the terrain or an icon
+with another to reproduce a right click. `MENU/BACK` opens or closes the
+current menu.
+
 The in-game icon panel also exposes movement, sound toggles, follower behavior, map centering, battle tracking, and divine powers.
 
 ## Project Layout
 
 - `cmd/populous`: application entry point.
+- `mobile`: Ebitengine mobile bridge used by `ebitenmobile`.
+- `android`: Gradle application shell and lifecycle integration.
+- `scripts/run-android.sh`: reproducible AAR/APK/install/launch pipeline.
 - `internal/game`: Ebitengine game loop, menus, rendering, input, save/load, and audio playback.
 - `internal/multiplayer`: asynchronous TCP transport, handshake, lockstep command scheduling, state hashing, and resynchronization.
 - `internal/populous`: world simulation, terrain generation, AI, powers, battles, snapshots, graphics decoding, and sound decoding.
@@ -129,7 +154,8 @@ go build ./cmd/populous
 
 ## Save Files
 
-Save/load from the setup menu writes `go-populous.sav` in the current working directory.
+On desktop, save/load writes `go-populous.sav` in the current working directory.
+On Android, the same file is stored in the application's private files directory.
 
 ## Legal Notice
 

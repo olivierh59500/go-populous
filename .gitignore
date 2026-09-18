@@ -33,6 +33,14 @@ go.work.sum
 # .DS_Store
 .DS_Store
 
+# Android local configuration and build products
+android/.gradle/
+android/build/
+android/app/build/
+android/app/libs/*.aar
+android/app/libs/*-sources.jar
+android/local.properties
+
 # Editor/IDE
 # .idea/
 # .vscode/
