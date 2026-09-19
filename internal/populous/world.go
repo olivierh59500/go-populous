@@ -1933,6 +1933,11 @@ func (w *World) moveExplorer(index int) {
 		goTo = w.moveMagnetPeeps(index)
 	} else if isHeadedPeep(w.Peeps[index]) {
 		goTo = w.moveKnightPeep(index)
+		if goTo == noMove && w.legacyTurn.active && w.legacyTurn.advancedPlayer == player {
+			if move, ok := w.advancedKnightEscape(index); ok {
+				goTo = move
+			}
+		}
 	} else if player >= 0 && player < len(w.Magnets) && w.Magnets[player].Flags == MagnetMode {
 		goTo = w.moveMagnetPeeps(index)
 	} else {

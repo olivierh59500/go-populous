@@ -101,6 +101,20 @@ func TestAuditDeterministicAcrossWorkers(t *testing.T) {
 		if r.livingSlots[0]+r.livingSlots[1]+r.deadSlots+r.ruinSlots != r.slots {
 			t.Fatal("slot counters do not partition the world")
 		}
+		for player := range r.actualSummary {
+			if r.actualSummary[player].Population != r.population[player] {
+				t.Fatalf("actual summary population=%d, terminal population=%d", r.actualSummary[player].Population, r.population[player])
+			}
+			if r.peakActualSummary[player].Population < r.actualSummary[player].Population ||
+				r.peakActualSummary[player].Towns < r.actualSummary[player].Towns ||
+				r.peakActualSummary[player].Castles < r.actualSummary[player].Castles ||
+				r.peakActualSummary[player].Knights < r.actualSummary[player].Knights {
+				t.Fatal("actual summary peak is below the terminal summary")
+			}
+			if r.unclassifiedPowerScore[player] != 0 {
+				t.Fatalf("unexpected power score delta for player %d: %d", player, r.unclassifiedPowerScore[player])
+			}
+		}
 	}
 	var first, second bytes.Buffer
 	if err := writeCSV(&first, one); err != nil {
@@ -115,6 +129,117 @@ func TestAuditDeterministicAcrossWorkers(t *testing.T) {
 	rows, err := csv.NewReader(&first).ReadAll()
 	if err != nil || len(rows) != len(matches)+1 {
 		t.Fatalf("CSV shape invalid: rows=%d error=%v", len(rows), err)
+	}
+	if len(rows[0]) <= 43 || rows[0][42] != "state_hash" || rows[0][43] != "blue_exact_quakes" {
+		t.Fatalf("legacy CSV prefix changed or exact metrics were not appended: %v", rows[0])
+	}
+}
+
+func TestScoreDeltasAttributeEveryPowerToEachPlayer(t *testing.T) {
+	var got result
+	deltas := []int{
+		populous.ScoreQuake,
+		populous.ScoreSwamp,
+		populous.ScoreKnight,
+		populous.ScoreVolcano,
+		populous.ScoreFlood,
+		populous.ScoreWar,
+	}
+	for player := 0; player < 2; player++ {
+		for _, delta := range deltas {
+			before := [2]int{1000, 2000}
+			after := before
+			after[player] += delta
+			got.observeScoreDeltas(before, after)
+		}
+	}
+	for player, counts := range got.spells {
+		if counts != (spellCounts{quakes: 1, swamps: 1, knights: 1, volcanoes: 1, floods: 1, wars: 1}) {
+			t.Fatalf("player %d spell counts = %+v", player, counts)
+		}
+	}
+
+	before := [2]int{10, 20}
+	got.observeScoreDeltas(before, [2]int{85, 20})
+	got.observeScoreDeltas(before, before)
+	if got.unclassifiedPowerScore != [2]int{75, 0} {
+		t.Fatalf("unclassified score deltas = %v, want [75 0]", got.unclassifiedPowerScore)
+	}
+}
+
+func TestActualSummariesTrackTerminalValuesAndPeaks(t *testing.T) {
+	w := &populous.World{
+		BattleWon: [2]int{1, 2},
+		Peeps: []populous.Peep{
+			{Player: 0, Population: 100, Flags: populous.InTown, Frame: populous.FirstTown},
+			{Player: 0, Population: 200, Flags: populous.InTown, Frame: populous.LastTown},
+			{Player: 0, Population: 300, Flags: populous.OnMove, HeadFor: 2},
+			{Player: 1, Population: 400, Flags: populous.InTown, Frame: populous.FirstTown},
+		},
+	}
+	var got result
+	got.observeSummaries(w)
+	if got.actualSummary[0] != (populous.PlayerSummary{Population: 600, BattlesWon: 1, Knights: 1, Towns: 1, Castles: 1}) {
+		t.Fatalf("initial blue summary = %+v", got.actualSummary[0])
+	}
+	if got.actualSummary[1] != (populous.PlayerSummary{Population: 400, BattlesWon: 2, Towns: 1}) {
+		t.Fatalf("initial red summary = %+v", got.actualSummary[1])
+	}
+
+	w.Peeps[0].Population = 0
+	w.Peeps[1].Flags = populous.OnMove
+	w.Peeps[2].Population = 50
+	w.BattleWon[0] = 3
+	got.observeSummaries(w)
+	if got.actualSummary[0] != (populous.PlayerSummary{Population: 250, BattlesWon: 3, Knights: 1}) {
+		t.Fatalf("terminal blue summary = %+v", got.actualSummary[0])
+	}
+	if got.peakActualSummary[0] != (populous.PlayerSummary{Population: 600, BattlesWon: 3, Knights: 1, Towns: 1, Castles: 1}) {
+		t.Fatalf("blue summary peaks = %+v", got.peakActualSummary[0])
+	}
+}
+
+func TestCSVWritesAppendedExactMetrics(t *testing.T) {
+	r := result{}
+	r.spells[0] = spellCounts{quakes: 1, swamps: 2, knights: 3, volcanoes: 4, floods: 5, wars: 6}
+	r.spells[1] = spellCounts{quakes: 7, swamps: 8, knights: 9, volcanoes: 10, floods: 11, wars: 12}
+	r.unclassifiedPowerScore = [2]int{13, 14}
+	r.actualSummary = [2]populous.PlayerSummary{
+		{Towns: 15, Castles: 16, Knights: 17, BattlesWon: 18},
+		{Towns: 19, Castles: 20, Knights: 21, BattlesWon: 22},
+	}
+	r.peakActualSummary = [2]populous.PlayerSummary{
+		{Population: 23, Towns: 25, Castles: 27, Knights: 29, BattlesWon: 31},
+		{Population: 24, Towns: 26, Castles: 28, Knights: 30, BattlesWon: 32},
+	}
+	var output bytes.Buffer
+	if err := writeCSV(&output, []result{r}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(&output).ReadAll()
+	if err != nil || len(rows) != 2 || len(rows[0]) != len(rows[1]) {
+		t.Fatalf("CSV shape rows=%d header=%d data=%d err=%v", len(rows), len(rows[0]), len(rows[1]), err)
+	}
+	columns := make(map[string]string, len(rows[0]))
+	for i, name := range rows[0] {
+		columns[name] = rows[1][i]
+	}
+	for name, want := range map[string]string{
+		"blue_exact_quakes":             "1",
+		"red_exact_swamps":              "8",
+		"blue_exact_wars":               "6",
+		"red_exact_wars":                "12",
+		"blue_unclassified_power_score": "13",
+		"red_actual_castles":            "20",
+		"blue_actual_battles_won":       "18",
+		"red_peak_actual_population":    "24",
+		"blue_peak_actual_towns":        "25",
+		"red_peak_actual_knights":       "30",
+		"red_peak_actual_battles_won":   "32",
+	} {
+		if columns[name] != want {
+			t.Errorf("%s=%q, want %q", name, columns[name], want)
+		}
 	}
 }
 

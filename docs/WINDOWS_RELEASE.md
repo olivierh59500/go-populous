@@ -85,6 +85,13 @@ graphics, sound, input, save/load, TCP multiplayer, and display scaling must
 still be smoke-tested on real Windows systems for each architecture before a
 public release.
 
+The 20 September 2026 rebuild retains version `1.1.0` and the tracked filenames,
+but includes the current strategic AI. All three targets passed the structural
+and checksum checks above. Their common network source fingerprint is
+`c3dfe61306ee299cf36b60e2cf6c1699d4779cb0c69d97a9866e41f2e077c876`.
+The previous files are retained in an ignored local archive. This rebuild was
+not executed on Windows hardware or in a Windows VM.
+
 ## Signing and SmartScreen
 
 These binaries are **not Authenticode-signed** because the project has no

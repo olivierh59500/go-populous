@@ -31,7 +31,7 @@ régénèrent `android/app/libs/populous.aar`. La configuration release applique
 ressources inutilisées. Les noms et callbacks Java utilisés par Go/JNI sont
 préservés. Seule l'architecture `arm64-v8a` est incluse.
 
-La version actuelle est `1.1.0`, code Android `3`. Le nom de version commun est
+La version actuelle est `1.1.0`, code Android `4`. Le nom de version commun est
 défini dans `VERSION`; incrémenter aussi le code dans `android/app/build.gradle`
 à chaque version Android distribuée.
 
@@ -133,3 +133,20 @@ octet à l'APK public ; l'application non débogable démarre et rend le nouveau
 menu. Le build debug final a ensuite été remis sur le Pixel et les deux empreintes
 de données ont de nouveau été contrôlées. La copie temporaire resignée a été
 supprimée.
+
+## Régénération du 20 septembre 2026
+
+La version visible reste `1.1.0` et le code Android passe à `4`. L'APK public
+dans `dist/android/` embarque la nouvelle IA stratégique et conserve la clé
+release existante. Signature, absence du flag debug, ABI ARM64, alignements
+ZIP/ELF 16 Kio et SHA-256 ont été vérifiés. Le nom du fichier reste inchangé
+pour préserver le chemin déjà suivi dans Git.
+
+Le Pixel 10a a reçu la variante de développement `1.1.0 (4)` avec sa signature
+existante, sans désinstallation. La bibliothèque Go native a la même empreinte
+SHA-256 que celle de l'APK public optimisé. Le lancement de l'activité et le
+rendu de la démonstration automatique ont été vérifiés sur le téléphone ; les
+empreintes de la sauvegarde et des préférences sont conservées. Les
+données ont été sauvegardées localement avant l'installation. Cela valide le
+démarrage sur ce Pixel, pas une campagne complète ni une nouvelle session
+Bluetooth à deux appareils.
