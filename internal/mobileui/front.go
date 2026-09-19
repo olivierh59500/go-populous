@@ -9,6 +9,7 @@ type FrontPage uint8
 const (
 	FrontHome FrontPage = iota
 	FrontConquest
+	FrontMultiplayer
 	FrontSetup
 	FrontOptions
 	FrontPreferences
@@ -21,6 +22,7 @@ const (
 	FrontActionNone FrontAction = iota
 	FrontActionTutorial
 	FrontActionConquest
+	FrontActionMultiplayer
 	FrontActionCustom
 	FrontActionSetup
 	FrontActionPreferences
@@ -41,6 +43,8 @@ const (
 	FrontActionToggleWide
 	FrontActionTogglePad
 	FrontActionToggleScope
+	FrontActionHostBluetooth
+	FrontActionJoinBluetooth
 )
 
 type FrontButton struct {
@@ -64,12 +68,12 @@ type FrontItem struct {
 }
 
 type FrontState struct {
-	Title, Subtitle, Status            string
-	WorldTitle, WorldDetail, WorldCode string
-	Items                              []FrontItem
-	HelpLines                          []string
-	IdleSeconds                        int
-	IdleEnabled, CanStart              bool
+	Title, Subtitle, Status             string
+	WorldTitle, WorldDetail, WorldCode  string
+	Items                               []FrontItem
+	HelpLines                           []string
+	IdleSeconds                         int
+	IdleEnabled, CanStart, CanBluetooth bool
 }
 
 type FrontLayout struct {
@@ -132,15 +136,14 @@ func NewFrontLayout(width, height int, page FrontPage, pageIndex, itemCount int,
 	switch page {
 	case FrontHome:
 		for i, action := range [...]FrontAction{
-			FrontActionTutorial, FrontActionConquest,
-			FrontActionCustom, FrontActionSetup,
-			FrontActionPreferences, FrontActionLoad,
-			FrontActionHelp, FrontActionDemo,
+			FrontActionTutorial, FrontActionConquest, FrontActionMultiplayer,
+			FrontActionCustom, FrontActionSetup, FrontActionPreferences,
+			FrontActionLoad, FrontActionHelp, FrontActionDemo,
 		} {
-			addButton(gridRect(i%2, i/2, 2, 4), action, i)
+			addButton(gridRect(i%3, i/3, 3, 3), action, i)
 		}
 		return l
-	case FrontConquest:
+	case FrontConquest, FrontMultiplayer:
 		// Leave the top of the content area free for the world name, code
 		// and difficulty before the four navigation targets.
 		l.Rows = append(l.Rows, FrontRow{Rect: image.Rect(x, 42, x+panelWidth, 94)})
@@ -155,7 +158,14 @@ func NewFrontLayout(width, height int, page FrontPage, pageIndex, itemCount int,
 			left := x + i*(buttonWidth+6)
 			addButton(image.Rect(left, 100, left+buttonWidth, 140), choice.action, choice.delta)
 		}
-		addButton(image.Rect(x, l.ContentRect.Max.Y-42, x+panelWidth, l.ContentRect.Max.Y), FrontActionStart, 0)
+		playTop := l.ContentRect.Max.Y - 42
+		if page == FrontMultiplayer {
+			buttonWidth := (panelWidth - 6) / 2
+			addButton(image.Rect(x, playTop, x+buttonWidth, l.ContentRect.Max.Y), FrontActionHostBluetooth, 0)
+			addButton(image.Rect(x+buttonWidth+6, playTop, x+panelWidth, l.ContentRect.Max.Y), FrontActionJoinBluetooth, 0)
+		} else {
+			addButton(image.Rect(x, playTop, x+panelWidth, l.ContentRect.Max.Y), FrontActionStart, 0)
+		}
 	case FrontSetup:
 		for index := l.FirstItem; index < l.LastItem; index++ {
 			i := index - l.FirstItem

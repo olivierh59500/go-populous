@@ -2,27 +2,36 @@ package multiplayer
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
 )
 
-const DefaultConnectionTimeout = 15 * time.Second
+const (
+	DefaultConnectionTimeout = 15 * time.Second
+	transportPreambleTimeout = 5 * time.Second
+)
 
 // HostConnectionConfig controls one host-side connection attempt. A zero
 // Timeout uses DefaultConnectionTimeout. AssignedPlayer in Handshake is the
-// remote player's side; the host session owns the opposite side.
+// remote player's side; the host session owns the opposite side. An optional
+// TransportPreamble authenticates a local transport adapter before Hello.
 type HostConnectionConfig struct {
-	Handshake HostHandshakeConfig
-	Timeout   time.Duration
+	Handshake         HostHandshakeConfig
+	Timeout           time.Duration
+	TransportPreamble []byte
 }
 
 // ClientConnectionConfig controls one client-side connection attempt. A zero
-// Timeout uses DefaultConnectionTimeout.
+// Timeout uses DefaultConnectionTimeout. TransportPreamble, when non-empty,
+// is written before Hello and must match the host-side value.
 type ClientConnectionConfig struct {
-	Hello   Hello
-	Timeout time.Duration
+	Hello             Hello
+	Timeout           time.Duration
+	TransportPreamble []byte
 }
 
 // HostConnectResult is delivered exactly once by a host connection operation.
@@ -120,6 +129,7 @@ func ListenHostTCP(ctx context.Context, address string, config HostConnectionCon
 	if err := validateHostConnectionConfig(config); err != nil {
 		return nil, err
 	}
+	config.TransportPreamble = append([]byte(nil), config.TransportPreamble...)
 	ctx = connectionContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -169,6 +179,7 @@ func DialClientTCP(ctx context.Context, address string, config ClientConnectionC
 		close(results)
 		return results
 	}
+	config.TransportPreamble = append([]byte(nil), config.TransportPreamble...)
 	operationContext, cancel := context.WithTimeout(connectionContext(ctx), connectionTimeout(config.Timeout))
 	go func() {
 		defer cancel()
@@ -196,6 +207,7 @@ func AcceptHostConnection(ctx context.Context, connection net.Conn, config HostC
 		close(results)
 		return results
 	}
+	config.TransportPreamble = append([]byte(nil), config.TransportPreamble...)
 	operationContext, cancel := context.WithTimeout(connectionContext(ctx), connectionTimeout(config.Timeout))
 	go func() {
 		defer cancel()
@@ -217,6 +229,7 @@ func JoinClientConnection(ctx context.Context, connection net.Conn, config Clien
 		close(results)
 		return results
 	}
+	config.TransportPreamble = append([]byte(nil), config.TransportPreamble...)
 	operationContext, cancel := context.WithTimeout(connectionContext(ctx), connectionTimeout(config.Timeout))
 	go func() {
 		defer cancel()
@@ -238,6 +251,9 @@ func establishHostConnection(ctx context.Context, connection net.Conn, config Ho
 	}()
 	if err := configureTCPConnection(connection); err != nil {
 		return HostConnectResult{Err: err}
+	}
+	if err := receiveTransportPreamble(ctx, connection, config.TransportPreamble); err != nil {
+		return HostConnectResult{Err: connectionOperationError(ctx, "host transport preamble", err)}
 	}
 
 	hello, err := AcceptHandshake(ctx, connection, config.Handshake)
@@ -273,6 +289,9 @@ func establishClientConnection(ctx context.Context, connection net.Conn, config 
 	}()
 	if err := configureTCPConnection(connection); err != nil {
 		return ClientConnectResult{Err: err}
+	}
+	if err := sendTransportPreamble(ctx, connection, config.TransportPreamble); err != nil {
+		return ClientConnectResult{Err: connectionOperationError(ctx, "client transport preamble", err)}
 	}
 
 	welcome, start, err := JoinHandshake(ctx, connection, config.Hello)
@@ -317,6 +336,9 @@ func validateHostConnectionConfig(config HostConnectionConfig) error {
 	if config.Timeout < 0 {
 		return fmt.Errorf("invalid multiplayer connection timeout %s", config.Timeout)
 	}
+	if len(config.TransportPreamble) > 64 {
+		return fmt.Errorf("multiplayer transport preamble is longer than 64 bytes")
+	}
 	return validateHostHandshakeConfig(config.Handshake)
 }
 
@@ -324,7 +346,71 @@ func validateClientConnectionConfig(config ClientConnectionConfig) error {
 	if config.Timeout < 0 {
 		return fmt.Errorf("invalid multiplayer connection timeout %s", config.Timeout)
 	}
+	if len(config.TransportPreamble) > 64 {
+		return fmt.Errorf("multiplayer transport preamble is longer than 64 bytes")
+	}
 	return validateMessage(config.Hello)
+}
+
+func receiveTransportPreamble(ctx context.Context, connection net.Conn, expected []byte) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	preambleContext, cancel := transportPreambleContext(ctx)
+	defer cancel()
+	cleanup, err := applyContextDeadline(preambleContext, connection)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	received := make([]byte, len(expected))
+	if _, err := io.ReadFull(connection, received); err != nil {
+		if contextErr := preambleContext.Err(); contextErr != nil {
+			return contextErr
+		}
+		if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+			return context.DeadlineExceeded
+		}
+		return fmt.Errorf("read authentication preamble: %w", err)
+	}
+	if subtle.ConstantTimeCompare(received, expected) != 1 {
+		return fmt.Errorf("authentication preamble mismatch")
+	}
+	return nil
+}
+
+func sendTransportPreamble(ctx context.Context, connection net.Conn, preamble []byte) error {
+	if len(preamble) == 0 {
+		return nil
+	}
+	preambleContext, cancel := transportPreambleContext(ctx)
+	defer cancel()
+	cleanup, err := applyContextDeadline(preambleContext, connection)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	for remaining := preamble; len(remaining) > 0; {
+		count, err := connection.Write(remaining)
+		if err != nil {
+			if contextErr := preambleContext.Err(); contextErr != nil {
+				return contextErr
+			}
+			if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+				return context.DeadlineExceeded
+			}
+			return fmt.Errorf("write authentication preamble: %w", err)
+		}
+		if count == 0 {
+			return fmt.Errorf("write authentication preamble: %w", io.ErrUnexpectedEOF)
+		}
+		remaining = remaining[count:]
+	}
+	return nil
+}
+
+func transportPreambleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(connectionContext(ctx), transportPreambleTimeout)
 }
 
 func connectionContext(ctx context.Context) context.Context {

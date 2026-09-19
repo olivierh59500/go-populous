@@ -195,6 +195,7 @@ type Game struct {
 	touch              touchInputState
 	mobileUI           *mobilePresentation
 	mobileInputReset   atomic.Bool
+	bluetoothAvailable atomic.Bool
 	intro              *introPresentation
 	demo               *demoPlayback
 	demoIdle           *attract.Idle
@@ -258,6 +259,7 @@ type Game struct {
 	audioInitialized   bool
 	sound              *soundPlayer
 	network            *networkGame
+	bluetooth          *bluetoothBridge
 }
 
 func New(bundle *assets.Bundle) *Game {
@@ -276,6 +278,7 @@ func New(bundle *assets.Bundle) *Game {
 		oldViewPeep:        -1,
 		savePath:           saveFileName,
 		soundBank:          bundle.SoundBank,
+		bluetooth:          newBluetoothBridge(),
 	}
 	for name, img := range bundle.Screens {
 		g.images[name] = ebiten.NewImageFromImage(img)
@@ -352,6 +355,7 @@ func horizontalImageFrames(atlas *ebiten.Image, frameWidth, frameHeight int) []*
 }
 
 func (g *Game) Update() error {
+	g.updateBluetooth()
 	if g.recording != nil {
 		return g.updateDemoRecording()
 	}

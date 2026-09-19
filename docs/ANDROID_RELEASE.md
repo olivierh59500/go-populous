@@ -31,12 +31,14 @@ régénèrent `android/app/libs/populous.aar`. La configuration release applique
 ressources inutilisées. Les noms et callbacks Java utilisés par Go/JNI sont
 préservés. Seule l'architecture `arm64-v8a` est incluse.
 
-La version actuelle est `1.0.0`, code `2`, définie dans
+La version actuelle est `1.1.0`, code `3`, définie dans
 `android/app/build.gradle`. Incrémenter le code à chaque version distribuée.
 
-Les fichiers publiables sont générés dans `dist/android/` (ignoré par Git) :
+Les fichiers de publication sont générés dans `dist/android/`. L'APK courant et
+`SHA256SUMS` sont explicitement inclus dans Git ; les clés, certificats de
+travail, rapports et archives locales restent ignorés :
 
-- `populous-android-1.0.0-arm64.apk` : l'application signée ;
+- `populous-android-1.1.0-arm64.apk` : l'application signée ;
 - `SHA256SUMS` : empreinte du fichier à télécharger ;
 - `SIGNATURE.txt` et `populous-release-cert.pem` : certificat public et vérification ;
 - `RELEASE.txt` : versions des outils et propriétés de cette construction.
@@ -114,3 +116,19 @@ L'application testée reste non débogable et optimisée par R8.
 L'APK dans `dist/android/` conserve sa signature release privée distincte.
 Le Pixel testé utilise des pages de 4 Kio : le support 16 Kio a été contrôlé
 dans l'APK et les ELF, mais n'a pas été exécuté sur un appareil en mode 16 Kio.
+
+La version `1.1.0 (3)` ajoute le multijoueur local Bluetooth. Le build debug
+correspondant a été installé sur le Pixel 10a : permission « appareils à
+proximité », visibilité, enregistrement du service RFCOMM sécurisé, attente de
+l'hôte, fermeture du service, recherche cliente, appareils déjà associés et
+annulation/reprise du sélecteur sont validés. La sauvegarde et les préférences
+ont conservé leurs empreintes. Une partie complète reste à vérifier avec un
+second appareil physique ; voir le [guide Bluetooth](ANDROID_BLUETOOTH.md).
+
+Le contenu release optimisé a également été resigné temporairement avec la clé
+debug déjà installée, afin de le lancer sans désinstaller l'application ni perdre
+ses données. Ses 11 entrées applicatives hors signature correspondent octet par
+octet à l'APK public ; l'application non débogable démarre et rend le nouveau
+menu. Le build debug final a ensuite été remis sur le Pixel et les deux empreintes
+de données ont de nouveau été contrôlées. La copie temporaire resignée a été
+supprimée.

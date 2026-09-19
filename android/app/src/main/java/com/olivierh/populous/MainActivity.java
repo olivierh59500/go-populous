@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowInsets;
@@ -19,6 +21,30 @@ import java.io.File;
 
 public final class MainActivity extends Activity {
     private EbitenView ebitenView;
+    private BluetoothMultiplayer bluetoothMultiplayer;
+    private final Handler bluetoothHandler = new Handler(Looper.getMainLooper());
+    private boolean bluetoothPolling;
+    private final Runnable bluetoothPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (!bluetoothPolling) {
+                return;
+            }
+            try {
+                // Drain a short burst without monopolising the Android UI thread.
+                for (int index = 0; index < 8; index++) {
+                    String command = Mobile.pollBluetoothCommand();
+                    if (command == null || command.isEmpty()) {
+                        break;
+                    }
+                    bluetoothMultiplayer.handleCommand(command);
+                }
+            } catch (Exception error) {
+                Log.w("Populous", "Cannot process Bluetooth multiplayer command", error);
+            }
+            bluetoothHandler.postDelayed(this, 100L);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,11 +72,33 @@ public final class MainActivity extends Activity {
             getWindow().setAttributes(attributes);
         }
 
+        bluetoothMultiplayer = new BluetoothMultiplayer(this);
+        Mobile.setBluetoothAvailable(bluetoothMultiplayer.isAvailable());
+
         ebitenView = new EbitenView(this);
         ebitenView.setFocusableInTouchMode(true);
         ebitenView.requestFocus();
         setContentView(ebitenView);
+        bluetoothPolling = true;
+        bluetoothHandler.post(bluetoothPoll);
         hideSystemUi();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (bluetoothMultiplayer != null) {
+            bluetoothMultiplayer.onRequestPermissionsResult(requestCode);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (bluetoothMultiplayer != null) {
+            bluetoothMultiplayer.onActivityResult(requestCode, resultCode);
+        }
     }
 
     @Override
@@ -77,6 +125,20 @@ public final class MainActivity extends Activity {
         if (hasFocus) {
             hideSystemUi();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        bluetoothPolling = false;
+        bluetoothHandler.removeCallbacks(bluetoothPoll);
+        // onPause can be a permission or pairing dialog; only final Activity
+        // teardown cancels the corresponding Go multiplayer reservation.
+        Mobile.cancelBluetooth();
+        if (bluetoothMultiplayer != null) {
+            bluetoothMultiplayer.close();
+            bluetoothMultiplayer = null;
+        }
+        super.onDestroy();
     }
 
     private void hideSystemUi() {

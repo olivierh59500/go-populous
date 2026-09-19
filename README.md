@@ -31,6 +31,7 @@ The project recreates the original isometric world view, terrain sculpting, popu
 - Mana and population gauges, minimap, viewport navigation, and original-style icon controls.
 - Tutorial, conquest, custom game options, save/load, restart, surrender, and PPC-vs-PPC simulation mode.
 - Two-player TCP multiplayer with a versioned deterministic lockstep protocol, state hashes, and automatic snapshot resynchronization.
+- Offline Android multiplayer over secure Bluetooth Classic RFCOMM, using the same lockstep protocol through a private loopback bridge.
 - Divine powers: earthquake, swamp, knight, volcano, flood, and armageddon.
 - Multiple terrain sets decoded from Amiga data: grass, desert, snow/ice, and rocky worlds.
 - Amiga-style graphics and audio decoding for screens, tiles, sprites, music, effects, and speech banks.
@@ -170,6 +171,14 @@ The release script never uninstalls the development app or changes its save.
 
 Real-device presentation capture and app-only sound reconstruction are described
 in [Android video capture](docs/ANDROID_VIDEO.md).
+
+Android also offers **MULTIPLAYER** from the touch home screen. The host plays
+Good and chooses the world with **HOST / CREATE**; the other device joins as
+Evil with **JOIN**. The connection uses secure Bluetooth Classic RFCOMM and does
+not require Internet access. There is currently no reconnection or session
+resume after a lasting interruption. Permissions, pairing, privacy notes and
+the mandatory two-device test plan are in the
+[Android Bluetooth guide](docs/ANDROID_BLUETOOTH.md).
 
 ### Multiplayer
 

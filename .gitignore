@@ -41,7 +41,9 @@ android/app/libs/*.aar
 android/app/libs/*-sources.jar
 android/local.properties
 android/keystore/
-/dist/android/
+/dist/android/*
+!/dist/android/SHA256SUMS
+!/dist/android/populous-android-1.1.0-arm64.apk
 
 # Generated demo movies and export scratch files
 /recordings/
@@ -54,4 +56,5 @@ android/keystore/
 # .vscode/
 
 .gitignore
-docs/
+docs/*
+!docs/ANDROID_BLUETOOTH.md
