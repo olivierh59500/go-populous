@@ -87,18 +87,38 @@ The strategic AI is only used in the demo; normal games retain their original
 opponent. Victory is not guaranteed.
 
 The strategic AI expands connected flat areas for new castles, keeps useful
-existing elevations (including levels 3 and 4), and raises vulnerable plateaus
-to level 2 when the opposing side can flood. It forecasts the cost of short
-repairs to soft obstacles and avoids excavating hard rock to sea level. It can
-rally followers into knights, attack settlements and moving survivors with
-available spells, and reserve mana for a decisive Armageddon when ahead.
+existing elevations (including levels 3 and 4), and levels each settlement at
+its current altitude instead of spending mana on a prescribed flood plateau.
+It forecasts propagated terrain costs, abandons impossible hard-rock projects
+when construction is not restricted to existing towns, and repairs short soft
+obstacles. Impossible projects no longer monopolize its four-town shortlist.
+It can release settlers early by lowering a peripheral castle vertex, waiting
+for ordinary emigration and restoring the ground. Both edits cost normal mana;
+it does not use the historical computer's privileged early-emigration rule.
+It also fixes founding slopes ignored by the original AI and uses
+ordinary paid actions to rescue recoverable swimmers or truly blocked settlers.
+It can rally followers into mature knights, attack settlements and moving
+survivors with available spells, and reserve expensive volcanoes for dense
+targets. On high-attrition landscapes it founds endangered settlers first,
+lets small leaders grow in town and can recruit nearby populated towns through
+the ordinary paid magnet and merging rules. When knights and Armageddon are
+unavailable, a strong carrier follows paid waypoints along a safe land route;
+the controller wakes it again after merging into or capturing a settlement.
+Ready Armageddon, Flood and Knight powers
+cannot be postponed indefinitely by routine frontier work; immediate Knight
+priority is limited to the terrain economies where its complete A/B improved.
 At the front, it can deprive nearby enemy towns of farmland and build passages
-for its expeditions using ordinary paid terrain actions. Each edit requires
+for its expeditions using ordinary paid terrain actions. In high-attrition
+worlds it can trade some peripheral farmland to stop a knight or, with a large
+population advantage, break a remaining enemy position. It must preserve
+friendly town centres and avoid drowning its followers. Each edit requires
 local construction presence, including when resuming a repair. Flood decisions
 forecast the actual submerged tiles on an independent terrain copy; they do
 not inspect future random outcomes or modify the live world while planning.
 On worlds where construction is forbidden, it switches to ordinary fighting
 after establishing four towns rather than waiting for a castle-based army.
+The implementation study and current 990-match results are in the
+[strategic AI rework report](docs/AI_STRATEGIC_REWORK_2026-09-19.md).
 
 Normal playback continues until elimination or a 20-minute simulation limit,
 then shows the result for eight seconds before selecting the next world. The

@@ -86,6 +86,38 @@ func advancedTestWorld() *World {
 	return w
 }
 
+func TestAdvancedLandImpossibleFootprintsDoNotStarveViableTown(t *testing.T) {
+	for _, gameMode := range []byte{0, GameRaiseTown} {
+		w := advancedTestWorld()
+		w.Level.GameMode = gameMode
+		if gameMode == GameRaiseTown {
+			// Equal intermediate production makes a hard-rock footprint a dead
+			// end even in the town-only construction rule.
+			for stage := 2; stage <= 9; stage++ {
+				w.Rules.ManaAdd[stage] = 3
+				w.Rules.PopulationAdd[stage] = 1
+				w.Rules.WeaponsAdd[stage] = 3
+			}
+		}
+		for _, pos := range []int{10 + 10*MapWidth, 20 + 10*MapWidth, 30 + 10*MapWidth, 40 + 10*MapWidth, 50 + 40*MapWidth} {
+			w.Peeps = append(w.Peeps, Peep{Player: 0, Flags: InTown, Population: 100, AtPos: pos})
+			w.MapWho[pos] = byte(len(w.Peeps))
+		}
+		w.Alt[52+40*EndWidth] = 2
+		w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+		for _, p := range w.Peeps[:4] {
+			w.MapBlk[p.AtPos+2] = RockBlock
+		}
+		pos := w.Peeps[4].AtPos
+		if w.checkLife(0, w.Peeps[0].AtPos) <= w.checkLife(0, pos) {
+			t.Fatal("fixture does not fill the old shortlist with impossible towns")
+		}
+		if !w.advancedLand(0) || w.checkLife(0, pos) != CityFood {
+			t.Fatal("four impossible projects starved the viable fifth town")
+		}
+	}
+}
+
 func TestAdvancedComputerTerrainFinishesCastleLegally(t *testing.T) {
 	w := advancedTestWorld()
 	pos := 20 + 20*MapWidth
@@ -116,6 +148,42 @@ func TestAdvancedComputerTerrainFinishesCastleLegally(t *testing.T) {
 	w.runAdvancedComputerPlayer(GodPlayer)
 	if w.StateHash() != hash {
 		t.Fatal("AI took a second action in the same slot")
+	}
+}
+
+func TestAdvancedComputerAbandonsHardRockCastleFootprint(t *testing.T) {
+	w := advancedTestWorld()
+	pos := 20 + 20*MapWidth
+	w.Peeps = []Peep{{Player: GodPlayer, Flags: InTown, Population: 200, AtPos: pos}}
+	w.MapWho[pos] = 1
+	w.MapBlk[pos+2] = RockBlock
+	w.Alt[22+20*EndWidth] = 2 // A tempting paid edit cannot remove hard rock.
+	w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+	w.MapBlk[pos+2] = RockBlock
+	before := w.StateHash()
+	if w.advancedLand(GodPlayer) || w.StateHash() != before {
+		t.Fatal("AI spent mana on a castle footprint blocked by permanent rock")
+	}
+}
+
+func TestAdvancedComputerImprovesReachableHardRockTownOnlyWorld(t *testing.T) {
+	w := advancedTestWorld()
+	w.Level.GameMode = GameRaiseTown
+	pos := 20 + 20*MapWidth
+	w.Peeps = []Peep{{Player: GodPlayer, Flags: InTown, Population: 200, AtPos: pos}}
+	w.MapWho[pos] = 1
+	w.Alt[20+18*EndWidth] = 2
+	w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+	w.MapBlk[pos+2] = RockBlock
+	beforeLife := w.checkLife(GodPlayer, pos)
+	if !w.advancedLand(GodPlayer) {
+		t.Fatal("AI abandoned its only legal town-only construction base")
+	}
+	if got := w.checkLife(GodPlayer, pos); got <= beforeLife {
+		t.Fatalf("town food=%d, want improvement above %d", got, beforeLife)
+	}
+	if w.MapBlk[pos+2] != RockBlock {
+		t.Fatal("AI removed permanent rock without lowering it to sea level")
 	}
 }
 
@@ -164,8 +232,18 @@ func TestAdvancedComputerAvoidsFriendlyFire(t *testing.T) {
 		t.Fatal("AI attacked a target surrounded by more valuable friendly people")
 	}
 	w.Peeps[1].AtPos = 50 + 50*MapWidth
+	if !w.advancedPower(GodPlayer) || w.Magnets[GodPlayer].Mana != 20000-ManaQuakeCost {
+		t.Fatal("AI did not prefer a cheaper quake against the isolated enemy town")
+	}
+	w = advancedTestWorld()
+	w.Computer[GodPlayer].Mode |= computerVolcano | computerQuake
+	w.Magnets[GodPlayer].Mana = 20000
+	w.Peeps = []Peep{
+		{Player: DevilPlayer, Flags: InTown, Population: 1500, AtPos: 20 + 20*MapWidth},
+		{Player: DevilPlayer, Flags: InTown, Population: 5000, AtPos: 22 + 22*MapWidth},
+	}
 	if !w.advancedPower(GodPlayer) || w.Magnets[GodPlayer].Mana != 20000-ManaVolcanoCost {
-		t.Fatal("AI did not attack the isolated valuable enemy town with legal mana cost")
+		t.Fatal("AI did not reserve volcano for a dense high-value enemy cluster")
 	}
 }
 
@@ -184,43 +262,46 @@ func TestAdvancedComputerHonoursTerrainRestrictions(t *testing.T) {
 	}
 }
 
-func TestAdvancedComputerBuildsFloodResistantPlateauAndResumesPlan(t *testing.T) {
+func TestAdvancedComputerDoesNotRaiseAPlateauForFlood(t *testing.T) {
 	w := advancedTestWorld()
 	pos := 20 + 20*MapWidth
 	w.Peeps = []Peep{{Player: GodPlayer, Flags: InTown, Population: 200, AtPos: pos}}
 	w.MapWho[pos] = 1
 	w.Magnets[GodPlayer].Mana = 5000
-	w.Computer[GodPlayer].NoTowns = 3
-	w.Alt[22+20*EndWidth] = 2
-	w.makeMap(0, 0, MapWidth-1, MapHeight-1)
-	before := w.StateHash()
-	if w.advancedRaisedPlateau(GodPlayer) || w.StateHash() != before {
-		t.Fatal("AI renovated a productive low plateau against a passive enemy")
-	}
 	w.Computer[DevilPlayer].Mode |= computerFlood
-	if !w.advancedRaisedPlateau(GodPlayer) {
-		t.Fatal("AI did not start a flood defense")
+	before := w.StateHash()
+	if w.advancedLand(GodPlayer) || w.StateHash() != before {
+		t.Fatal("AI spent mana raising an already productive plateau for a possible flood")
 	}
-	for i := 0; i < 10; i++ {
-		w.advancedLand(GodPlayer)
-	}
-	resumed := WorldFromSnapshot(w.Snapshot(), w.Rules)
-	for i := 0; i < 100 && w.Computer[GodPlayer].Arrived >= advancedPlateauPlan; i++ {
-		w.advancedLand(GodPlayer)
-		resumed.advancedLand(GodPlayer)
-		if w.StateHash() != resumed.StateHash() {
-			t.Fatal("unfinished plateau did not resume deterministically")
+	for _, altitude := range w.Alt {
+		if altitude != 1 {
+			t.Fatal("AI introduced a forced target altitude")
 		}
 	}
-	if w.Computer[GodPlayer].Arrived != 0 {
-		t.Fatal("plateau never completed")
+}
+
+func TestAdvancedComputerCancelsRetiredPlateauPlanOnResume(t *testing.T) {
+	w := advancedTestWorld()
+	pos := 20 + 20*MapWidth
+	w.Peeps = []Peep{{Player: GodPlayer, Flags: InTown, Population: 200, AtPos: pos}}
+	w.MapWho[pos] = 1
+	w.Magnets[GodPlayer].Mana = 5000
+	w.Alt[22+20*EndWidth] = 2
+	w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+	w.Computer[GodPlayer].Arrived = advancedRetiredPlateauPlan + 2
+	w.Computer[GodPlayer].LastBattle = pos
+	resumed := WorldFromSnapshot(w.Snapshot(), w.Rules)
+	if !w.advancedLand(GodPlayer) || !resumed.advancedLand(GodPlayer) {
+		t.Fatal("AI did not resume with an ordinary current-altitude terrain action")
 	}
-	if w.Alt[20+20*EndWidth] != 2 || w.checkLife(GodPlayer, pos) != CityFood {
-		t.Fatal("renovation did not produce a flat altitude-two castle footprint")
+	if w.StateHash() != resumed.StateHash() {
+		t.Fatal("retired plan cancellation diverged after snapshot")
 	}
-	w.Magnets[DevilPlayer].Mana = ManaFloodCost
-	if !w.Flood(DevilPlayer) || w.MapBlk[pos] == WaterBlock || w.checkLife(GodPlayer, pos) != CityFood {
-		t.Fatal("completed plateau did not survive one flood with its food intact")
+	if w.Computer[GodPlayer].Arrived >= advancedRetiredPlateauPlan && w.Computer[GodPlayer].Arrived < advancedRepairPlan {
+		t.Fatal("retired level-two project remained active")
+	}
+	if w.Alt[20+20*EndWidth] != 1 || w.checkLife(GodPlayer, pos) != CityFood {
+		t.Fatal("AI did not finish the castle at its existing altitude")
 	}
 }
 
@@ -281,7 +362,7 @@ func TestAdvancedComputerBanksDecisiveSpellAndAttacksMobileSurvivors(t *testing.
 		t.Fatal("AI spent its decisive spell savings on harassment")
 	}
 	w.Magnets[GodPlayer].Mana = ManaWarCost + 1000
-	if !w.advancedPower(GodPlayer) || !w.War {
+	if !w.advancedReadyWar(GodPlayer) || !w.War {
 		t.Fatal("AI failed to convert its advantage into Armageddon")
 	}
 	w = advancedTestWorld()
@@ -291,6 +372,27 @@ func TestAdvancedComputerBanksDecisiveSpellAndAttacksMobileSurvivors(t *testing.
 	w.Peeps = []Peep{{Player: GodPlayer, Flags: InTown, Population: 3000, AtPos: 20 + 20*MapWidth}, {Player: DevilPlayer, Flags: OnMove, Population: 150, AtPos: 45 + 45*MapWidth}}
 	if !w.advancedPower(GodPlayer) || w.Magnets[GodPlayer].Mana != 500 {
 		t.Fatal("AI ignored the mobile enemy after its towns were destroyed")
+	}
+}
+
+func TestAdvancedComputerWaitsForOriginalKnightStrength(t *testing.T) {
+	w := advancedTestWorld()
+	w.Computer[GodPlayer].Mode |= computerKnight
+	w.Computer[GodPlayer].NoCastles = 3
+	w.Computer[DevilPlayer].Mode |= computerQuake
+	w.Magnets[GodPlayer].Mana = ManaKnightCost + 500
+	w.Magnets[GodPlayer].Carried = 1
+	w.Peeps = []Peep{
+		{Player: GodPlayer, Flags: OnMove, Population: DevilMakesKnight, AtPos: 20 + 20*MapWidth},
+		{Player: DevilPlayer, Flags: InTown, Population: 1000, AtPos: 40 + 40*MapWidth},
+	}
+	before := w.StateHash()
+	if w.advancedReadyKnight(GodPlayer) || w.StateHash() != before {
+		t.Fatal("AI spent 7500 mana on an undersized knight")
+	}
+	w.Peeps[0].Population++
+	if !w.advancedReadyKnight(GodPlayer) || w.Peeps[0].Status != KnightStatus || w.Magnets[GodPlayer].Mana != 500 {
+		t.Fatal("AI did not launch a legally funded, mature knight")
 	}
 }
 

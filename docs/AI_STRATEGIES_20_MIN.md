@@ -3,7 +3,7 @@
 > Archive de l’étude initiale, avant intégration des corrections moteur et des
 > nouvelles tactiques. Les chiffres ci-dessous décrivent cette ancienne
 > version ; le bilan de l’implémentation figure dans
-> [AI_IMPLEMENTATION_2026-09-19.md](AI_IMPLEMENTATION_2026-09-19.md).
+> [AI_STRATEGIC_REWORK_2026-09-19.md](AI_STRATEGIC_REWORK_2026-09-19.md).
 
 Date : 19 septembre 2026. Périmètre : les **495 mondes originaux livrés avec le projet**, IA stratégique bleue contre IA historique rouge, pouvoirs et ressources de chaque niveau conservés.
 
@@ -77,6 +77,12 @@ Un château a une capacité de **3 050** dans ce moteur, contre au plus **290** 
 Il faut donc comparer, pour chaque chantier, le coût des actions, le gain de mana attendu, le délai avant le prochain émigrant, l’espace ouvert pour d’autres villages et le risque de destruction. Le nombre brut de châteaux ne doit plus être l’objectif principal.
 
 Conserver les plateaux utiles à 3 ou 4 ; privilégier l’altitude 2 quand Flood est disponible chez l’adversaire et menace réellement les implantations. Éviter d’abaisser un plateau entier pour enlever une roche dure. Prévoir une réparation après Volcano en fonction des zones encore habitables et du coût, plutôt que restaurer mécaniquement toute la surface.
+
+> Mise à jour après expérimentation : la préférence automatique pour l’altitude
+> 2 a été retirée. Le C++ original nivelle à l'altitude locale et les deux
+> implémentations anticipant Flood dépensaient jusqu'à des dizaines d'actions
+> sans vérifier que l'adversaire pouvait lancer le sort prochainement. La
+> stratégie courante conserve donc toute altitude naturelle rentable.
 
 ## Stratégies à développer
 

@@ -40,6 +40,43 @@ func (w *World) advancedFoundingTile(player, pos int) bool {
 	if total == 1 {
 		return false
 	}
+	if total%2 == 0 && w.advancedFoundingRoughness(x, y) > 0 {
+		// The original one_block_flat ignores even-sum non-flat tiles, including
+		// the common two-low/two-high saddle. Try each legal one-corner edit and
+		// choose the cheapest action that reduces actual local roughness; no
+		// prescribed altitude is needed.
+		beforeRoughness := w.advancedFoundingRoughness(x, y)
+		bestScore, bestX, bestY, bestRaise := 0, 0, 0, false
+		for xx := x; xx <= x+1; xx++ {
+			for yy := y; yy <= y+1; yy++ {
+				for _, raise := range [...]bool{false, true} {
+					if !raise && w.Level.GameMode&GameOnlyRaise != 0 {
+						continue
+					}
+					trial := *w
+					if !trial.advancedSculpt(player, xx, yy, raise) || trial.Magnets[player].Mana < 0 || w.advancedDamagesTown(&trial, player) {
+						continue
+					}
+					cost := w.Magnets[player].Mana - trial.Magnets[player].Mana
+					if cost > advancedMaxRoutineLandCost {
+						continue
+					}
+					improvement := beforeRoughness - trial.advancedFoundingRoughness(x, y)
+					if improvement <= 0 {
+						continue
+					}
+					score := improvement*40 - cost
+					if score > bestScore {
+						bestScore, bestX, bestY, bestRaise = score, xx, yy, raise
+					}
+				}
+			}
+		}
+		if bestScore > 0 {
+			return w.advancedSculpt(player, bestX, bestY, bestRaise)
+		}
+		return false
+	}
 	for xx := x; xx <= x+1; xx++ {
 		for yy := y; yy <= y+1; yy++ {
 			alt := w.Alt[xx+yy*EndWidth]
@@ -55,6 +92,49 @@ func (w *World) advancedFoundingTile(player, pos int) bool {
 		}
 	}
 	return false
+}
+
+// advancedUrgentFounding protects the short-lived settlers of high-attrition
+// landscapes. Ordinary advancedLand considers walkers only after every town;
+// a continuous supply of town improvements can otherwise let starting groups
+// die without ever receiving their one paid founding edit.
+func (w *World) advancedUrgentFounding(player int) bool {
+	if w.Rules.WalkDeath < 8 || w.Level.GameMode&GameNoBuild != 0 || w.Computer[player].Mode&computerLand == 0 {
+		return false
+	}
+	limit := w.Rules.WalkDeath * 16
+	best, bestPopulation, bestCost := -1, 0, 0
+	for i, p := range w.Peeps {
+		if p.Population <= 0 || p.Population > limit || int(p.Player) != player || p.Flags != OnMove || isHeadedPeep(p) || !inMap(p.AtPos) || w.checkLife(player, p.AtPos) > 0 {
+			continue
+		}
+		trial := *w
+		beforeMana := trial.Magnets[player].Mana
+		if !trial.advancedFoundingTile(player, p.AtPos) {
+			continue
+		}
+		cost := beforeMana - trial.Magnets[player].Mana
+		if best < 0 || p.Population < bestPopulation || p.Population == bestPopulation && (cost < bestCost || cost == bestCost && i < best) {
+			best, bestPopulation, bestCost = i, p.Population, cost
+		}
+	}
+	return best >= 0 && w.advancedFoundingTile(player, w.Peeps[best].AtPos)
+}
+
+func (w *World) advancedFoundingRoughness(x, y int) int {
+	altitudes := [...]int{
+		w.Alt[x+y*EndWidth],
+		w.Alt[x+1+y*EndWidth],
+		w.Alt[x+(y+1)*EndWidth],
+		w.Alt[x+1+(y+1)*EndWidth],
+	}
+	roughness := 0
+	for i := range altitudes {
+		for j := i + 1; j < len(altitudes); j++ {
+			roughness += abs(altitudes[i] - altitudes[j])
+		}
+	}
+	return roughness
 }
 
 // advancedFrontierLand accompanies real troops, using one paid terrain edit.

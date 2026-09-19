@@ -106,6 +106,68 @@ func TestAdvancedSculptAtMapEdges(t *testing.T) {
 	}
 }
 
+func TestAdvancedFoundingTileHandlesTwoLevelSaddle(t *testing.T) {
+	for _, mode := range []byte{0, GameOnlyRaise} {
+		t.Run(fmt.Sprintf("mode%d", mode), func(t *testing.T) {
+			w := advancedTestWorld()
+			w.Level.GameMode = mode
+			x, y := 20, 20
+			pos := x + y*MapWidth
+			w.Alt[x+y*EndWidth] = 1
+			w.Alt[x+1+y*EndWidth] = 1
+			w.Alt[x+(y+1)*EndWidth] = 2
+			w.Alt[x+1+(y+1)*EndWidth] = 2
+			w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+			w.Peeps = []Peep{{Player: GodPlayer, Flags: OnMove, Population: 150, AtPos: pos}}
+			w.MapWho[pos] = 1
+			beforeRoughness := w.advancedFoundingRoughness(x, y)
+			beforeMana := w.Magnets[GodPlayer].Mana
+			if !w.advancedFoundingTile(GodPlayer, pos) {
+				t.Fatal("AI ignored the two-low/two-high founding saddle")
+			}
+			if got := w.advancedFoundingRoughness(x, y); got >= beforeRoughness {
+				t.Fatalf("roughness=%d, want below %d", got, beforeRoughness)
+			}
+			if spent := beforeMana - w.Magnets[GodPlayer].Mana; spent != ManaPointCost+4 {
+				t.Fatalf("founding saddle cost=%d, want one changed vertex", spent)
+			}
+		})
+	}
+}
+
+func TestAdvancedUrgentFoundingProtectsOnlyFragileHighAttritionSettler(t *testing.T) {
+	makeWorld := func(population int) *World {
+		w := advancedTestWorld()
+		w.Rules.WalkDeath = 8
+		x, y := 20, 20
+		pos := x + y*MapWidth
+		w.Alt[x+y*EndWidth] = 1
+		w.Alt[x+1+y*EndWidth] = 1
+		w.Alt[x+(y+1)*EndWidth] = 2
+		w.Alt[x+1+(y+1)*EndWidth] = 2
+		w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+		w.Peeps = []Peep{{Player: GodPlayer, Flags: OnMove, Population: population, AtPos: pos}}
+		w.MapWho[pos] = 1
+		return w
+	}
+
+	fragile := makeWorld(8 * 16)
+	beforeMana := fragile.Magnets[GodPlayer].Mana
+	beforeRoughness := fragile.advancedFoundingRoughness(20, 20)
+	if !fragile.advancedUrgentFounding(GodPlayer) {
+		t.Fatal("fragile high-attrition settler did not receive a founding action")
+	}
+	if fragile.Magnets[GodPlayer].Mana >= beforeMana || fragile.advancedFoundingRoughness(20, 20) >= beforeRoughness {
+		t.Fatal("urgent founding did not pay for a useful terrain improvement")
+	}
+
+	mature := makeWorld(8*16 + 1)
+	before := mature.StateHash()
+	if mature.advancedUrgentFounding(GodPlayer) || mature.StateHash() != before {
+		t.Fatal("non-fragile settler stole an urgent action slot")
+	}
+}
+
 func TestAdvancedRepairAbandonsLostConstructionPresence(t *testing.T) {
 	w := advancedTestWorld()
 	pos, point := 20+20*MapWidth, 22+20*EndWidth
@@ -156,6 +218,56 @@ func TestAdvancedFloodForecastMatchesActualFloodWithoutSideEffects(t *testing.T)
 	}
 }
 
+func TestAdvancedFloodConsidersSurvivingForcesAndUsesNormalCost(t *testing.T) {
+	for _, tc := range []struct {
+		name                               string
+		ownDry, ownWet, enemyDry, enemyWet int
+		want                               bool
+	}{
+		{"decisive despite greater absolute losses", 14000, 6000, 1000, 3000, true},
+		{"would lose most of own army", 4000, 6000, 1000, 3000, false},
+		{"would leave stronger enemy", 800, 400, 1000, 2100, false},
+		{"enemy mostly sheltered", 14000, 6000, 3000, 1000, false},
+		{"last exposed survivors", 1000, 0, 0, 50, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for player := 0; player < 2; player++ {
+				w := advancedTestWorld()
+				w.Rules.WalkDeath = 8
+				for i := range w.Alt {
+					w.Alt[i] = 2
+				}
+				w.Peeps = []Peep{
+					{Player: byte(player), Population: tc.ownDry, Flags: InTown, AtPos: 10 + 10*MapWidth},
+					{Player: byte(player), Population: tc.ownWet, Flags: InTown, AtPos: 20 + 20*MapWidth},
+					{Player: byte(player ^ 1), Population: tc.enemyDry, Flags: InTown, AtPos: 40 + 40*MapWidth},
+					{Player: byte(player ^ 1), Population: tc.enemyWet, Flags: InTown, AtPos: 50 + 50*MapWidth},
+				}
+				for _, index := range []int{1, 3} {
+					p := w.Peeps[index].AtPos
+					base := p%MapWidth + p/MapWidth*EndWidth
+					for _, corner := range [...]int{0, 1, EndWidth, EndWidth + 1} {
+						w.Alt[base+corner] = 1
+					}
+				}
+				w.makeMap(0, 0, MapWidth-1, MapHeight-1)
+				w.Computer[player].Mode |= computerFlood
+				w.Magnets[player].Mana = ManaFloodCost + 1000
+				before, beforeRNG := w.StateHash(), w.rng
+				if got := w.advancedReadyFlood(player); got != tc.want {
+					t.Fatalf("cast=%v want=%v", got, tc.want)
+				}
+				if !tc.want && w.StateHash() != before {
+					t.Fatal("rejected flood modified the world")
+				}
+				if tc.want && (w.Magnets[player].Mana != 1000 || w.MapBlk[w.Peeps[3].AtPos] != WaterBlock || w.rng != beforeRNG) {
+					t.Fatal("flood bypassed normal terrain, mana or RNG behaviour")
+				}
+			}
+		})
+	}
+}
+
 func TestAdvancedPolicyRalliesBeforeLaunchingKnight(t *testing.T) {
 	w := advancedTestWorld()
 	w.Computer[0].NoCastles = 3
@@ -168,6 +280,30 @@ func TestAdvancedPolicyRalliesBeforeLaunchingKnight(t *testing.T) {
 	}
 	if w.Magnets[0].Carried != 2 || w.Peeps[1].Status == KnightStatus {
 		t.Fatal("policy converted an undersized leader without ordinary recruitment")
+	}
+}
+
+func TestAdvancedPolicyLetsHighAttritionCarrierGrowInTown(t *testing.T) {
+	base := advancedTestWorld()
+	base.Rules.WalkDeath = 8
+	base.Computer[GodPlayer].NoCastles = 3
+	base.Computer[GodPlayer].Mode |= computerKnight
+	base.Magnets[GodPlayer].Mana = 10000
+	base.Magnets[GodPlayer].Carried = 1
+	base.Peeps = []Peep{
+		{Player: GodPlayer, Flags: InTown, Population: 2600, AtPos: 20 + 20*MapWidth},
+		{Player: DevilPlayer, Flags: InTown, Population: 1000, AtPos: 50 + 50*MapWidth},
+	}
+	base.MapWho[base.Peeps[0].AtPos], base.MapWho[base.Peeps[1].AtPos] = 1, 2
+	before := base.StateHash()
+	if base.advancedPolicy(GodPlayer) || base.StateHash() != before {
+		t.Fatal("high-attrition policy woke a growing carrier and spent rally mana")
+	}
+
+	lowAttrition := *base
+	lowAttrition.Rules.WalkDeath = 1
+	if !lowAttrition.advancedPolicy(GodPlayer) || lowAttrition.Peeps[0].Flags != OnMove || lowAttrition.Magnets[GodPlayer].Mana != 10000-ManaMagnetCost {
+		t.Fatal("low-attrition policy did not retain ordinary rally behaviour")
 	}
 }
 

@@ -35,6 +35,10 @@ type match struct {
 	side  int
 }
 
+type spellCounts struct {
+	quakes, swamps, knights, volcanoes, floods, wars int
+}
+
 type result struct {
 	match
 	outcome                                               string
@@ -46,6 +50,13 @@ type result struct {
 	// These audible events combine both camps, not just the advanced computer.
 	quakes, volcanoes, floods, knights, wars int
 	hash                                     [32]byte
+
+	// Exact spell attribution comes from each player's canonical score delta.
+	// The simulation permits at most one computer power per player and tick.
+	spells                 [2]spellCounts
+	unclassifiedPowerScore [2]int
+	actualSummary          [2]populous.PlayerSummary
+	peakActualSummary      [2]populous.PlayerSummary
 }
 
 func main() {
@@ -247,11 +258,15 @@ func outcome(w *populous.World, side int) string {
 func simulate(ctx context.Context, m match, rules populous.TerrainRules, limit int) (result, bool) {
 	w := populous.GenerateWorldWithRules(m.level, rules)
 	r := result{match: m, initialPopulation: w.PlayerPopulations(), initialMana: [2]int{w.Magnets[0].Mana, w.Magnets[1].Mana}}
+	r.observeSummaries(w)
 	for w.GameTurn < limit && outcome(w, m.side) == "ongoing" {
 		if w.GameTurn%64 == 0 && ctx.Err() != nil {
 			return r, false
 		}
+		scores := w.Scores
 		w.TickWithAdvancedComputer(m.side)
+		r.observeScoreDeltas(scores, w.Scores)
+		r.observeSummaries(w)
 		for player := range w.Computer {
 			if w.Computer[player].DoneTurn == w.GameTurn {
 				r.actionMarkers[player]++
@@ -309,9 +324,48 @@ func simulate(ctx context.Context, m match, rules populous.TerrainRules, limit i
 	return r, true
 }
 
+func (r *result) observeScoreDeltas(before, after [2]int) {
+	for player := range after {
+		delta := after[player] - before[player]
+		counts := &r.spells[player]
+		switch delta {
+		case 0:
+		case populous.ScoreQuake:
+			counts.quakes++
+		case populous.ScoreSwamp:
+			counts.swamps++
+		case populous.ScoreKnight:
+			counts.knights++
+		case populous.ScoreVolcano:
+			counts.volcanoes++
+		case populous.ScoreFlood:
+			counts.floods++
+		case populous.ScoreWar:
+			counts.wars++
+		default:
+			// Preserve an explicit diagnostic instead of silently assigning an
+			// unexpected score change to the wrong power.
+			r.unclassifiedPowerScore[player] += delta
+		}
+	}
+}
+
+func (r *result) observeSummaries(w *populous.World) {
+	for player := range r.actualSummary {
+		summary := w.SummaryFor(player)
+		r.actualSummary[player] = summary
+		peak := &r.peakActualSummary[player]
+		peak.Population = max(peak.Population, summary.Population)
+		peak.Towns = max(peak.Towns, summary.Towns)
+		peak.Castles = max(peak.Castles, summary.Castles)
+		peak.Knights = max(peak.Knights, summary.Knights)
+		peak.BattlesWon = max(peak.BattlesWon, summary.BattlesWon)
+	}
+}
+
 func writeCSV(out io.Writer, results []result) error {
 	w := csv.NewWriter(out)
-	if err := w.Write([]string{"level", "code", "terrain", "game_mode", "player_powers", "enemy_powers", "speed", "strategic_side", "outcome", "ticks", "seconds", "blue_population", "red_population", "blue_living_population", "red_living_population", "blue_mana", "red_mana", "blue_castles", "red_castles", "blue_peak_castles", "red_peak_castles", "blue_towns", "red_towns", "blue_action_markers", "red_action_markers", "blue_alive_slots", "red_alive_slots", "dead_slots", "ruins", "slots", "war_tick", "first_offense_tick", "last_offense_tick", "both_quakes", "both_volcanoes", "both_floods", "both_knights", "both_wars", "blue_initial_population", "red_initial_population", "blue_initial_mana", "red_initial_mana", "state_hash"}); err != nil {
+	if err := w.Write([]string{"level", "code", "terrain", "game_mode", "player_powers", "enemy_powers", "speed", "strategic_side", "outcome", "ticks", "seconds", "blue_population", "red_population", "blue_living_population", "red_living_population", "blue_mana", "red_mana", "blue_castles", "red_castles", "blue_peak_castles", "red_peak_castles", "blue_towns", "red_towns", "blue_action_markers", "red_action_markers", "blue_alive_slots", "red_alive_slots", "dead_slots", "ruins", "slots", "war_tick", "first_offense_tick", "last_offense_tick", "both_quakes", "both_volcanoes", "both_floods", "both_knights", "both_wars", "blue_initial_population", "red_initial_population", "blue_initial_mana", "red_initial_mana", "state_hash", "blue_exact_quakes", "red_exact_quakes", "blue_exact_swamps", "red_exact_swamps", "blue_exact_knights", "red_exact_knights", "blue_exact_volcanoes", "red_exact_volcanoes", "blue_exact_floods", "red_exact_floods", "blue_exact_wars", "red_exact_wars", "blue_unclassified_power_score", "red_unclassified_power_score", "blue_actual_towns", "red_actual_towns", "blue_actual_castles", "red_actual_castles", "blue_actual_knights", "red_actual_knights", "blue_actual_battles_won", "red_actual_battles_won", "blue_peak_actual_population", "red_peak_actual_population", "blue_peak_actual_towns", "red_peak_actual_towns", "blue_peak_actual_castles", "red_peak_actual_castles", "blue_peak_actual_knights", "red_peak_actual_knights", "blue_peak_actual_battles_won", "red_peak_actual_battles_won"}); err != nil {
 		return err
 	}
 	for _, r := range results {
@@ -320,6 +374,26 @@ func writeCSV(out io.Writer, results []result) error {
 			row = append(row, strconv.Itoa(n))
 		}
 		row = append(row, fmt.Sprintf("%x", r.hash))
+		for _, n := range []int{
+			r.spells[0].quakes, r.spells[1].quakes,
+			r.spells[0].swamps, r.spells[1].swamps,
+			r.spells[0].knights, r.spells[1].knights,
+			r.spells[0].volcanoes, r.spells[1].volcanoes,
+			r.spells[0].floods, r.spells[1].floods,
+			r.spells[0].wars, r.spells[1].wars,
+			r.unclassifiedPowerScore[0], r.unclassifiedPowerScore[1],
+			r.actualSummary[0].Towns, r.actualSummary[1].Towns,
+			r.actualSummary[0].Castles, r.actualSummary[1].Castles,
+			r.actualSummary[0].Knights, r.actualSummary[1].Knights,
+			r.actualSummary[0].BattlesWon, r.actualSummary[1].BattlesWon,
+			r.peakActualSummary[0].Population, r.peakActualSummary[1].Population,
+			r.peakActualSummary[0].Towns, r.peakActualSummary[1].Towns,
+			r.peakActualSummary[0].Castles, r.peakActualSummary[1].Castles,
+			r.peakActualSummary[0].Knights, r.peakActualSummary[1].Knights,
+			r.peakActualSummary[0].BattlesWon, r.peakActualSummary[1].BattlesWon,
+		} {
+			row = append(row, strconv.Itoa(n))
+		}
 		if err := w.Write(row); err != nil {
 			return err
 		}

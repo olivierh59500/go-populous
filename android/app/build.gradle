@@ -14,7 +14,7 @@ android {
         applicationId "com.olivierh.populous"
         minSdk 23
         targetSdk 36
-        versionCode 3
+        versionCode 4
         versionName populousVersionName
 
         ndk {
