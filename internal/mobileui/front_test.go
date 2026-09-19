@@ -39,19 +39,25 @@ func TestFrontLayoutTouchTargets(t *testing.T) {
 func TestFrontMenusExposeEveryDestination(t *testing.T) {
 	l := NewFrontLayout(539, 240, FrontHome, 9, 0)
 	seen := map[FrontAction]bool{}
+	columns, rows := map[int]bool{}, map[int]bool{}
 	for index, b := range l.Buttons {
 		if b.Index != index {
 			t.Errorf("home item %d has index %d", index, b.Index)
 		}
 		seen[b.Action] = true
+		columns[b.Rect.Min.X] = true
+		rows[b.Rect.Min.Y] = true
 	}
-	for _, action := range []FrontAction{FrontActionTutorial, FrontActionConquest, FrontActionCustom, FrontActionSetup, FrontActionPreferences, FrontActionLoad, FrontActionHelp, FrontActionDemo} {
+	for _, action := range []FrontAction{FrontActionTutorial, FrontActionConquest, FrontActionMultiplayer, FrontActionCustom, FrontActionSetup, FrontActionPreferences, FrontActionLoad, FrontActionHelp, FrontActionDemo} {
 		if !seen[action] {
 			t.Errorf("home is missing action %d", action)
 		}
 	}
-	if l.PageIndex != 0 || l.PageCount != 1 || len(l.Buttons) != 8 {
+	if l.PageIndex != 0 || l.PageCount != 1 || len(l.Buttons) != 9 {
 		t.Fatalf("home unexpectedly paginated or has extra targets: %+v", l)
+	}
+	if len(columns) != 3 || len(rows) != 3 {
+		t.Fatalf("home is not a 3x3 grid: columns=%v rows=%v", columns, rows)
 	}
 }
 
@@ -149,24 +155,47 @@ func TestFrontPowerBoundaryIsConfigurable(t *testing.T) {
 }
 
 func TestFrontWorldNavigationStepMagnitudes(t *testing.T) {
-	l := NewFrontLayout(320, 240, FrontConquest, 0, 495)
-	want := map[FrontAction]map[int]bool{
-		FrontActionPrevWorld: {1: false, 10: false},
-		FrontActionNextWorld: {1: false, 10: false},
-	}
-	for _, button := range l.Buttons {
-		if steps, ok := want[button.Action]; ok {
-			if _, ok := steps[button.Index]; !ok {
-				t.Fatalf("unexpected world navigation step %d", button.Index)
+	for _, page := range []FrontPage{FrontConquest, FrontMultiplayer} {
+		l := NewFrontLayout(320, 240, page, 0, 495)
+		want := map[FrontAction]map[int]bool{
+			FrontActionPrevWorld: {1: false, 10: false},
+			FrontActionNextWorld: {1: false, 10: false},
+		}
+		for _, button := range l.Buttons {
+			if steps, ok := want[button.Action]; ok {
+				if _, ok := steps[button.Index]; !ok {
+					t.Fatalf("page %d: unexpected world navigation step %d", page, button.Index)
+				}
+				steps[button.Index] = true
 			}
-			steps[button.Index] = true
+		}
+		for action, steps := range want {
+			for step, found := range steps {
+				if !found {
+					t.Errorf("page %d: missing action %d with step %d", page, action, step)
+				}
+			}
 		}
 	}
-	for action, steps := range want {
-		for step, found := range steps {
-			if !found {
-				t.Errorf("missing action %d with step %d", action, step)
+}
+
+func TestFrontMultiplayerActionsAndWorldSummary(t *testing.T) {
+	for _, width := range []int{320, 539, 800} {
+		l := NewFrontLayout(width, 240, FrontMultiplayer, 0, 495)
+		if len(l.Rows) != 1 || l.Rows[0].Rect.Min.Y != l.ContentRect.Min.Y {
+			t.Fatalf("width %d: multiplayer world summary is missing: %+v", width, l.Rows)
+		}
+		seen := map[FrontAction]int{}
+		for _, button := range l.Buttons {
+			seen[button.Action]++
+		}
+		for _, action := range []FrontAction{FrontActionHostBluetooth, FrontActionJoinBluetooth, FrontActionBack} {
+			if seen[action] != 1 {
+				t.Errorf("width %d: multiplayer action %d appears %d times", width, action, seen[action])
 			}
+		}
+		if seen[FrontActionStart] != 0 {
+			t.Errorf("width %d: multiplayer exposes the conquest start action", width)
 		}
 	}
 }

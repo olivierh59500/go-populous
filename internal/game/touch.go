@@ -267,6 +267,9 @@ func (g *Game) returnToTitleFromTouch() {
 	}
 	g.tutorialActive = false
 	g.tutorialPaused = false
+	if g.mobileUI != nil {
+		g.mobileUI.status = ""
+	}
 	g.setLevel(g.levelIndex)
 	g.state = StateTitle
 }

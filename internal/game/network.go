@@ -42,16 +42,20 @@ type pendingLocalCommand struct {
 // ListenAddress and JoinAddress must be set. The host plays good and chooses
 // the world; the joining player plays evil.
 type NetworkConfig struct {
-	ListenAddress string
-	JoinAddress   string
-	PlayerName    string
-	LevelIndex    int
+	ListenAddress     string
+	JoinAddress       string
+	PlayerName        string
+	LevelIndex        int
+	TransportPreamble []byte
 }
 
 type networkGame struct {
 	role    networkRole
 	address string
 	status  string
+	// bluetooth means that TCP is the private loopback half of an Android
+	// RFCOMM proxy. The wire protocol itself remains transport-independent.
+	bluetooth bool
 
 	cancel context.CancelFunc
 
@@ -132,7 +136,8 @@ func (g *Game) StartMultiplayer(config NetworkConfig) error {
 				InputDelay:     multiplayer.DefaultInputDelay,
 				Start:          start,
 			},
-			Timeout: 10 * time.Minute,
+			Timeout:           10 * time.Minute,
+			TransportPreamble: config.TransportPreamble,
 		})
 		if err != nil {
 			cancel()
@@ -155,8 +160,9 @@ func (g *Game) StartMultiplayer(config NetworkConfig) error {
 	network.address = join
 	network.status = "CONNECTING " + join
 	network.clientResults = multiplayer.DialClientTCP(ctx, join, multiplayer.ClientConnectionConfig{
-		Hello:   multiplayer.NewHello(currentNetworkBuildID(), config.PlayerName, populous.DevilPlayer),
-		Timeout: 30 * time.Second,
+		Hello:             multiplayer.NewHello(currentNetworkBuildID(), config.PlayerName, populous.DevilPlayer),
+		Timeout:           30 * time.Second,
+		TransportPreamble: config.TransportPreamble,
 	})
 	return nil
 }
@@ -268,6 +274,9 @@ func (g *Game) advanceWorld() bool {
 	g.network.pollTransport()
 	g.network.pollEvents(g)
 	g.network.pollHeartbeat()
+	if g.network.terminal && g.network.bluetooth {
+		g.stopBluetoothPlatform()
+	}
 	if !g.multiplayerReady() {
 		return false
 	}
@@ -636,6 +645,7 @@ func (g *Game) Close() error {
 	if g == nil {
 		return nil
 	}
+	g.stopBluetoothPlatform()
 	recordingErr := g.closeDemoRecording()
 	recordingErr = errors.Join(recordingErr, g.audioTrace.Close())
 	if g.network == nil {

@@ -75,10 +75,12 @@ func TestConnectionSetupOverNetPipe(t *testing.T) {
 	defer cancel()
 
 	hostConfig := testHostConnectionConfig(time.Second)
+	hostConfig.TransportPreamble = []byte("local-proxy-key")
 	hostResults := AcceptHostConnection(ctx, hostConnection, hostConfig)
 	clientResults := JoinClientConnection(ctx, clientConnection, ClientConnectionConfig{
-		Hello:   NewHello(hostConfig.Handshake.BuildID, "pipe", populous.DevilPlayer),
-		Timeout: time.Second,
+		Hello:             NewHello(hostConfig.Handshake.BuildID, "pipe", populous.DevilPlayer),
+		Timeout:           time.Second,
+		TransportPreamble: []byte("local-proxy-key"),
 	})
 	hostResult := awaitHostConnectResult(t, hostResults)
 	clientResult := awaitClientConnectResult(t, clientResults)
@@ -99,6 +101,75 @@ func TestConnectionSetupOverNetPipe(t *testing.T) {
 	}
 	if err := hostResult.Close(); err != nil {
 		t.Fatalf("close host result: %v", err)
+	}
+}
+
+func TestConnectionRejectsWrongTransportPreamble(t *testing.T) {
+	hostConnection, clientConnection := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	hostConfig := testHostConnectionConfig(time.Second)
+	hostConfig.TransportPreamble = []byte("expected-preamble")
+	hostResults := AcceptHostConnection(ctx, hostConnection, hostConfig)
+	clientResults := JoinClientConnection(ctx, clientConnection, ClientConnectionConfig{
+		Hello:             NewHello(hostConfig.Handshake.BuildID, "pipe", populous.DevilPlayer),
+		Timeout:           time.Second,
+		TransportPreamble: []byte("incorrect-preamble"),
+	})
+	if result := awaitHostConnectResult(t, hostResults); result.Err == nil {
+		t.Fatal("host accepted an incorrect transport preamble")
+	}
+	if result := awaitClientConnectResult(t, clientResults); result.Err == nil {
+		t.Fatal("client unexpectedly completed after preamble rejection")
+	}
+}
+
+func TestConnectionTransportPreambleTimeout(t *testing.T) {
+	hostConnection, clientConnection := net.Pipe()
+	defer clientConnection.Close()
+	hostConfig := testHostConnectionConfig(50 * time.Millisecond)
+	hostConfig.TransportPreamble = []byte("expected-preamble")
+	result := awaitHostConnectResult(t, AcceptHostConnection(context.Background(), hostConnection, hostConfig))
+	if !errors.Is(result.Err, context.DeadlineExceeded) {
+		t.Fatalf("preamble timeout error = %v, want context.DeadlineExceeded", result.Err)
+	}
+}
+
+func TestTransportPreambleContextCapsAndPreservesDeadline(t *testing.T) {
+	started := time.Now()
+	longParent, cancelLong := context.WithTimeout(context.Background(), time.Hour)
+	defer cancelLong()
+	capped, cancelCapped := transportPreambleContext(longParent)
+	defer cancelCapped()
+	cappedDeadline, ok := capped.Deadline()
+	if !ok {
+		t.Fatal("capped preamble context has no deadline")
+	}
+	remaining := cappedDeadline.Sub(started)
+	if remaining < transportPreambleTimeout-100*time.Millisecond || remaining > transportPreambleTimeout+100*time.Millisecond {
+		t.Fatalf("preamble deadline = %s, want about %s", remaining, transportPreambleTimeout)
+	}
+
+	parentDeadline := time.Now().Add(time.Second)
+	shortParent, cancelShort := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancelShort()
+	shorter, cancelShorter := transportPreambleContext(shortParent)
+	defer cancelShorter()
+	shortDeadline, ok := shorter.Deadline()
+	if !ok || !shortDeadline.Equal(parentDeadline) {
+		t.Fatalf("short parent deadline = %v, %t; want %v", shortDeadline, ok, parentDeadline)
+	}
+}
+
+func TestConnectionRejectsOversizedTransportPreamble(t *testing.T) {
+	hostConnection, clientConnection := net.Pipe()
+	defer clientConnection.Close()
+	hostConfig := testHostConnectionConfig(time.Second)
+	hostConfig.TransportPreamble = make([]byte, 65)
+	result := awaitHostConnectResult(t, AcceptHostConnection(context.Background(), hostConnection, hostConfig))
+	if result.Err == nil {
+		t.Fatal("accepted a transport preamble longer than 64 bytes")
 	}
 }
 

@@ -47,6 +47,53 @@ func SetAudioCapturePath(path string) error {
 	return populousGame.SetAudioTracePath(path)
 }
 
+// SetBluetoothAvailable tells the touch frontend whether this Android device
+// exposes a Bluetooth Classic adapter.
+func SetBluetoothAvailable(available bool) {
+	if populousGame != nil {
+		populousGame.SetBluetoothAvailable(available)
+	}
+}
+
+// PollBluetoothCommand lets the Android Activity consume one pending
+// Bluetooth transport command without ever blocking its UI thread.
+func PollBluetoothCommand() string {
+	if populousGame == nil {
+		return ""
+	}
+	return populousGame.PollPlatformCommand()
+}
+
+// BluetoothStatus forwards platform progress to the Ebitengine update loop.
+func BluetoothStatus(status string) {
+	if populousGame != nil {
+		populousGame.PostBluetoothStatus(status)
+	}
+}
+
+// BluetoothClientReady reports the private TCP loopback endpoint created by
+// Android after its RFCOMM client socket is connected.
+func BluetoothClientReady(address, name string) {
+	if populousGame != nil {
+		populousGame.PostBluetoothReady(address, name)
+	}
+}
+
+// BluetoothFailed forwards a permission, discovery or socket failure without
+// mutating game state from Android's callback thread.
+func BluetoothFailed(message string) {
+	if populousGame != nil {
+		populousGame.PostBluetoothFailure(message)
+	}
+}
+
+// CancelBluetooth is safe for Activity lifecycle callbacks.
+func CancelBluetooth() {
+	if populousGame != nil {
+		populousGame.CancelBluetooth()
+	}
+}
+
 // CancelInput prevents an unfinished gesture becoming an action after resume.
 func CancelInput() { populousGame.CancelInput() }
 

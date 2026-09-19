@@ -47,7 +47,7 @@ func (g *Game) drawMobileFront(screen *ebiten.Image, layout mobileui.FrontLayout
 	}
 
 	switch layout.Page {
-	case mobileui.FrontConquest:
+	case mobileui.FrontConquest, mobileui.FrontMultiplayer:
 		g.drawMobileFrontWorld(screen, layout, state)
 	case mobileui.FrontOptions:
 		for _, row := range layout.Rows {
@@ -120,7 +120,7 @@ func drawMobileFrontButton(screen *ebiten.Image, layout mobileui.FrontLayout, bu
 	item := mobileui.FrontItem{Enabled: true}
 	usesItem := false
 	switch button.Action {
-	case mobileui.FrontActionTutorial, mobileui.FrontActionConquest, mobileui.FrontActionCustom,
+	case mobileui.FrontActionTutorial, mobileui.FrontActionConquest, mobileui.FrontActionMultiplayer, mobileui.FrontActionCustom,
 		mobileui.FrontActionSetup, mobileui.FrontActionPreferences, mobileui.FrontActionLoad,
 		mobileui.FrontActionHelp, mobileui.FrontActionDemo, mobileui.FrontActionSetupItem,
 		mobileui.FrontActionDecrease, mobileui.FrontActionIncrease,
@@ -133,6 +133,12 @@ func drawMobileFrontButton(screen *ebiten.Image, layout mobileui.FrontLayout, bu
 	case mobileui.FrontActionStart:
 		usesItem = true
 		item.Enabled = state.CanStart
+	case mobileui.FrontActionHostBluetooth:
+		usesItem = true
+		item.Enabled = state.CanStart && state.CanBluetooth
+	case mobileui.FrontActionJoinBluetooth:
+		usesItem = true
+		item.Enabled = state.CanBluetooth
 	}
 	fill, ink := mobileHUDButton, mobileHUDInk
 	selected := item.Selected
@@ -161,6 +167,10 @@ func drawMobileFrontButton(screen *ebiten.Image, layout mobileui.FrontLayout, bu
 		if layout.Page == mobileui.FrontOptions {
 			label = "PLAY"
 		}
+	case mobileui.FrontActionHostBluetooth:
+		label = "HOST / CREATE"
+	case mobileui.FrontActionJoinBluetooth:
+		label = "JOIN"
 	case mobileui.FrontActionPrevWorld:
 		label = fmt.Sprintf("- %d", button.Index)
 	case mobileui.FrontActionNextWorld:
@@ -221,6 +231,8 @@ func mobileFrontIcon(action mobileui.FrontAction) mobileui.Action {
 		return mobileui.ActionHelp
 	case mobileui.FrontActionConquest:
 		return mobileui.ActionLeader
+	case mobileui.FrontActionMultiplayer:
+		return mobileui.ActionJoin
 	case mobileui.FrontActionCustom:
 		return mobileui.ActionRaise
 	case mobileui.FrontActionSetup:

@@ -35,7 +35,7 @@ func (g *Game) mobileFrontPage() mobileui.FrontPage {
 	case StateHelp:
 		return mobileui.FrontHelp
 	case StateSetup:
-		if g.mobileUI.frontPage == mobileui.FrontConquest || g.mobileUI.frontPage == mobileui.FrontPreferences {
+		if g.mobileUI.frontPage == mobileui.FrontConquest || g.mobileUI.frontPage == mobileui.FrontMultiplayer || g.mobileUI.frontPage == mobileui.FrontPreferences {
 			return g.mobileUI.frontPage
 		}
 	}
@@ -115,6 +115,8 @@ func (g *Game) updateMobileFrontInput() {
 			g.openMobileFront(mobileui.FrontConquest)
 		case mobileui.FrontConquest, mobileui.FrontOptions:
 			g.mobileFrontAction(mobileui.FrontActionStart, 0)
+		case mobileui.FrontMultiplayer:
+			g.mobileFrontAction(mobileui.FrontActionHostBluetooth, 0)
 		case mobileui.FrontHelp:
 			g.mobileFrontBack()
 		}
@@ -134,11 +136,15 @@ func (g *Game) updateMobileFrontInput() {
 
 func mobileFrontEnabled(state mobileui.FrontState, action mobileui.FrontAction, index int) bool {
 	switch action {
-	case mobileui.FrontActionTutorial, mobileui.FrontActionConquest, mobileui.FrontActionCustom, mobileui.FrontActionSetup, mobileui.FrontActionPreferences, mobileui.FrontActionLoad, mobileui.FrontActionHelp, mobileui.FrontActionDemo,
+	case mobileui.FrontActionTutorial, mobileui.FrontActionConquest, mobileui.FrontActionMultiplayer, mobileui.FrontActionCustom, mobileui.FrontActionSetup, mobileui.FrontActionPreferences, mobileui.FrontActionLoad, mobileui.FrontActionHelp, mobileui.FrontActionDemo,
 		mobileui.FrontActionSetupItem, mobileui.FrontActionDecrease, mobileui.FrontActionIncrease, mobileui.FrontActionTogglePlayerPower, mobileui.FrontActionToggleEnemyPower, mobileui.FrontActionToggleWide, mobileui.FrontActionTogglePad, mobileui.FrontActionToggleScope:
 		return index >= 0 && index < len(state.Items) && state.Items[index].Enabled
 	case mobileui.FrontActionStart:
 		return state.CanStart
+	case mobileui.FrontActionHostBluetooth:
+		return state.CanStart && state.CanBluetooth
+	case mobileui.FrontActionJoinBluetooth:
+		return state.CanBluetooth
 	}
 	return true
 }
@@ -160,6 +166,9 @@ func (g *Game) mobileFrontBack() {
 		if g.state == StateHelp {
 			g.state = StateTitle
 		}
+	case mobileui.FrontMultiplayer:
+		g.CancelBluetooth()
+		g.returnFromSetup()
 	case mobileui.FrontSetup:
 		g.returnFromSetup()
 	default:
@@ -177,6 +186,8 @@ func (g *Game) mobileFrontAction(action mobileui.FrontAction, index int) {
 		g.startTutorial()
 	case mobileui.FrontActionConquest:
 		g.openMobileFront(mobileui.FrontConquest)
+	case mobileui.FrontActionMultiplayer:
+		g.openMobileFront(mobileui.FrontMultiplayer)
 	case mobileui.FrontActionCustom:
 		g.openMobileFront(mobileui.FrontOptions)
 	case mobileui.FrontActionSetup:
@@ -207,6 +218,16 @@ func (g *Game) mobileFrontAction(action mobileui.FrontAction, index int) {
 		}
 		g.titleCode = ""
 		g.setLevel(wrapInt(g.levelIndex+delta, len(g.bundle.Levels)))
+	case mobileui.FrontActionHostBluetooth:
+		m.status = ""
+		if err := g.RequestBluetoothHost(g.levelIndex); err != nil {
+			m.status = strings.ToUpper(err.Error())
+		}
+	case mobileui.FrontActionJoinBluetooth:
+		m.status = ""
+		if err := g.RequestBluetoothJoin(); err != nil {
+			m.status = strings.ToUpper(err.Error())
+		}
 	case mobileui.FrontActionStart:
 		if g.world == nil || len(g.bundle.Levels) == 0 {
 			m.status = "NO CAMPAIGN DATA"
@@ -284,7 +305,7 @@ func (g *Game) mobileFrontLoad() {
 
 func (g *Game) mobileFrontState(layout mobileui.FrontLayout) mobileui.FrontState {
 	m := g.mobileUI
-	s := mobileui.FrontState{Title: "POPULOUS", Status: m.status, CanStart: g.world != nil && len(g.bundle.Levels) > 0}
+	s := mobileui.FrontState{Title: "POPULOUS", Status: m.status, CanStart: g.world != nil && len(g.bundle.Levels) > 0, CanBluetooth: g.BluetoothAvailable()}
 	level := populous.Level{}
 	if len(g.bundle.Levels) > 0 {
 		level = g.bundle.Levels[clampInt(g.levelIndex, 0, len(g.bundle.Levels)-1)]
@@ -298,6 +319,7 @@ func (g *Game) mobileFrontState(layout mobileui.FrontLayout) mobileui.FrontState
 		s.Items = []mobileui.FrontItem{
 			{Label: "TUTORIAL", Detail: "Learn terrain and powers", Enabled: true},
 			{Label: "CONQUEST", Detail: "Choose a world and play", Enabled: s.CanStart},
+			{Label: "MULTIPLAYER", Detail: "Play nearby over Bluetooth", Enabled: s.CanBluetooth},
 			{Label: "CUSTOM GAME", Detail: "Terrain, rules and powers", Enabled: s.CanStart},
 			{Label: "GAME SETUP", Detail: "Side, control, save and load", Enabled: s.CanStart},
 			{Label: "TOUCH SETTINGS", Detail: "Wide view and build area", Enabled: true},
@@ -312,6 +334,12 @@ func (g *Game) mobileFrontState(layout mobileui.FrontLayout) mobileui.FrontState
 	case mobileui.FrontConquest:
 		s.Title = "CONQUEST"
 		s.Subtitle = "CHOOSE A WORLD, THEN PLAY"
+	case mobileui.FrontMultiplayer:
+		s.Title = "BLUETOOTH MULTIPLAYER"
+		s.Subtitle = "HOST A WORLD OR JOIN A NEARBY GAME"
+		if s.Status == "" {
+			s.Status = g.BluetoothStatusText()
+		}
 	case mobileui.FrontSetup:
 		s.Title = "GAME SETUP"
 		s.Subtitle = "SELECT AN ACTION"
