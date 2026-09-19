@@ -17,7 +17,7 @@ import (
 const (
 	// Recycled people and friendly-town traversal change shared simulation
 	// results even though the packet and snapshot layouts stay compatible.
-	networkCompatibilityID = "go-populous-lockstep-2"
+	networkCompatibilityID = "go-populous-lockstep-3"
 	networkHashInterval    = 32
 	networkHashHistory     = 128
 	networkCatchUpTicks    = 4

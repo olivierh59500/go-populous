@@ -28,7 +28,7 @@ func TestPlayerPopulationsScansBothSides(t *testing.T) {
 	}
 }
 
-func TestHumanOnlyTicksKeepComputerStatsAndDeterministicSnapshot(t *testing.T) {
+func TestHumanOnlyTicksKeepComputerConfigurationAndDeterministicSnapshot(t *testing.T) {
 	level := Level{
 		Number:             31,
 		Terrain:            2,
@@ -43,7 +43,14 @@ func TestHumanOnlyTicksKeepComputerStatsAndDeterministicSnapshot(t *testing.T) {
 	left := GenerateWorld(level)
 	left.ComputerControlled = [2]bool{}
 	right := WorldFromSnapshot(left.Snapshot(), left.Rules)
-	computerBefore := left.Computer
+	configuration := func(world *World) [2][6]int {
+		var result [2][6]int
+		for player, stats := range world.Computer {
+			result[player] = [6]int{stats.Mode, stats.Skill, stats.Speed, stats.NoQuakes, stats.NoSwamps, stats.QuakeCount}
+		}
+		return result
+	}
+	computerBefore := configuration(left)
 
 	for tick := 0; tick < 256; tick++ {
 		left.TickWithComputer([2]bool{})
@@ -52,11 +59,48 @@ func TestHumanOnlyTicksKeepComputerStatsAndDeterministicSnapshot(t *testing.T) {
 			t.Fatalf("human-only worlds diverged at tick %d", tick+1)
 		}
 	}
-	if left.Computer != computerBefore || right.Computer != computerBefore {
-		t.Fatalf("human-only ticks changed computer stats: left=%+v right=%+v", left.Computer, right.Computer)
+	if configuration(left) != computerBefore || configuration(right) != computerBefore {
+		t.Fatalf("human-only ticks changed AI configuration: left=%+v right=%+v", left.Computer, right.Computer)
+	}
+	// Derived targets/town totals are still collected for both human players,
+	// as in move_peeps, and are part of the deterministic snapshot.
+	if left.Computer != right.Computer {
+		t.Fatalf("human-only worlds collected different derived statistics: left=%+v right=%+v", left.Computer, right.Computer)
 	}
 	if leftSnapshot, rightSnapshot := left.Snapshot(), right.Snapshot(); !reflect.DeepEqual(leftSnapshot, rightSnapshot) {
 		t.Fatal("deterministic human-only worlds produced different snapshots")
+	}
+}
+
+func TestHumanOnlyTickCollectsStatsBeforeComputerControlIsEnabled(t *testing.T) {
+	world := &World{Rules: DefaultTerrainRules()}
+	fillFlat(world)
+	world.Computer[DevilPlayer] = ComputerStats{
+		Mode: computerWar, Skill: 1, Speed: 1,
+		NoTowns: 999, NoCastles: 999, Best1: 999, Best2: 999, MyBest: 999,
+	}
+	world.Magnets[DevilPlayer] = Magnet{Flags: SettleMode, Mana: ManaWarCost + 1000}
+	world.Peeps = []Peep{
+		{Flags: OnMove, Player: GodPlayer, Population: 50, AtPos: 10 + 10*MapWidth},
+		{Flags: OnMove, Player: DevilPlayer, Population: 200, AtPos: 40 + 40*MapWidth},
+	}
+	world.MapWho[world.Peeps[0].AtPos], world.MapWho[world.Peeps[1].AtPos] = 1, 2
+
+	world.TickWithComputer([2]bool{})
+	if world.War || world.Magnets[DevilPlayer].Mana != ManaWarCost+1000 {
+		t.Fatal("human-only tick executed an AI power")
+	}
+	stats := world.Computer[DevilPlayer]
+	if stats.NoTowns != 0 || stats.NoCastles != 0 || stats.Best1 != -1 || stats.Best2 != -1 || stats.MyBest != -1 {
+		t.Fatalf("human-only tick failed to clear stale derived statistics: %+v", stats)
+	}
+	if world.Magnets[GodPlayer].Population != 50 || world.Magnets[DevilPlayer].Population != 200 {
+		t.Fatalf("human-only population totals = %d/%d, want 50/200", world.Magnets[0].Population, world.Magnets[1].Population)
+	}
+
+	world.TickWithComputer([2]bool{false, true})
+	if !world.War || world.Magnets[DevilPlayer].Mana != 1001 {
+		t.Fatalf("newly enabled AI ignored previously collected human totals: war=%v mana=%d", world.War, world.Magnets[DevilPlayer].Mana)
 	}
 }
 

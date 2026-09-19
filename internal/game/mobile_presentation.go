@@ -600,7 +600,7 @@ func (g *Game) mobileHUDState() mobileui.HUDState {
 		if p.Flags&populous.InTown != 0 {
 			kind = "TOWN"
 		}
-		if peepLooksLikeKnight(p) {
+		if g.peepLooksLikeKnight(p) {
 			kind = "KNIGHT"
 		}
 		side := "BLUE"

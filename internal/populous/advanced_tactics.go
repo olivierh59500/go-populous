@@ -25,7 +25,7 @@ func (w *World) advancedFloodExposure() [2]int {
 // also requires a living construction presence. Apply that same requirement
 // to every candidate, committed action and resumed multi-action project.
 func (w *World) advancedSculpt(player, x, y int, raise bool) bool {
-	if player < 0 || player >= len(w.Computer) || w.Computer[player].Mode&computerLand == 0 || !w.HasBuildPresence(player, x-3, y-3, 8, 8) {
+	if player < 0 || player >= len(w.Computer) || w.Computer[player].Mode&computerLand == 0 || !w.HasBuildPresenceAt(player, x-3, y-3, 8, 8, x, y) {
 		return false
 	}
 	return w.changeAltitude(player, x, y, raise, false)
@@ -90,7 +90,7 @@ func (w *World) advancedFrontierLand(player int) bool {
 			return
 		}
 		examined[point] |= mask
-		if !w.HasBuildPresence(player, x-3, y-3, 8, 8) {
+		if !w.HasBuildPresenceAt(player, x-3, y-3, 8, 8, x, y) {
 			return
 		}
 		trial := *w // Terrain and mana are value fields; never simulate RNG.

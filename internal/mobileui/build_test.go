@@ -50,6 +50,10 @@ func TestBuildPresenceValidatesBothScopes(t *testing.T) {
 			return CanBuild(w, populous.GodPlayer, 22, 22, scope, func(int, int) bool { return true })
 		}
 		w.Level.GameMode = populous.GameRaiseTown
+		if !canBuild() {
+			t.Fatalf("scope %d: original sea-level exception rejected an allied walker", scope)
+		}
+		w.Alt[22+22*populous.EndWidth] = 1
 		if canBuild() {
 			t.Fatalf("scope %d: wandering group passed towns-only restriction", scope)
 		}

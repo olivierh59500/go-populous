@@ -212,6 +212,8 @@ type World struct {
 	SoundEvents []int
 
 	rng lcg
+	// Scratch for a single synchronous tick; never part of saved/shared state.
+	legacyTurn legacyTurnState
 }
 
 type Peep struct {
@@ -300,13 +302,16 @@ func GenerateWorldWithRules(level Level, rules TerrainRules) *World {
 		Peeps:   make([]Peep, 0, MaxPeeps),
 		rng:     lcg(uint16(level.SeedOffset) + uint16((level.Number*5)&7)),
 	}
+	// clear_map in the original consumes the computer's four random draws
+	// before constructing the landscape, not after its woods and rocks.
+	w.initComputerStats()
 	w.makeAlt()
 	w.makeMap(0, 0, MapWidth-1, MapHeight-1)
 	w.makeWoodsRocks()
-	w.initComputerStats()
 	w.ComputerControlled = [2]bool{false, true}
 	w.ScorePlayer = GodPlayer
 	w.placeFirstPeople()
+	w.rng++ // setup_display advances the seed once after placing the people.
 	return w
 }
 
@@ -556,8 +561,8 @@ func (w *World) QuakeAt(player, x, y int) bool {
 	w.addScore(player, ScoreQuake)
 	bounds := newAltBounds(x, y)
 	for pass := 0; pass < 2; pass++ {
-		for yy := y; yy < y+9; yy++ {
-			for xx := x; xx < x+9; xx++ {
+		for xx := x; xx < x+9; xx++ {
+			for yy := y; yy < y+9; yy++ {
 				if xx < 0 || xx > MapWidth || yy < 0 || yy > MapHeight {
 					continue
 				}
@@ -604,8 +609,8 @@ func (w *World) VolcanoAt(player, x, y int) bool {
 	}
 
 	protected := w.protectedPowerPositions()
-	for yy := y; yy < y+8; yy++ {
-		for xx := x; xx < x+8; xx++ {
+	for xx := x; xx < x+8; xx++ {
+		for yy := y; yy < y+8; yy++ {
 			if xx < 0 || xx >= MapWidth || yy < 0 || yy >= MapHeight || w.rng.next()%5 != 0 {
 				continue
 			}
@@ -861,10 +866,26 @@ func (w *World) initialScoreFor(player int) int {
 }
 
 func (w *World) HasBuildPresence(player, xoff, yoff, width, height int) bool {
+	return w.hasBuildPresence(player, xoff, yoff, width, height, w.Level.GameMode&GameRaiseTown != 0)
+}
+
+// HasBuildPresenceAt applies the original construction-presence rule to one
+// altitude vertex. G_RAISE_TOWN requires a town only above sea level; a living
+// walker in the permitted area can still raise a vertex whose altitude is zero.
+// The caller supplies the area so presentation-specific view options do not
+// alter the underlying exception.
+func (w *World) HasBuildPresenceAt(player, xoff, yoff, width, height, targetX, targetY int) bool {
+	if targetX < 0 || targetX > MapWidth || targetY < 0 || targetY > MapHeight {
+		return false
+	}
+	needTown := w.Level.GameMode&GameRaiseTown != 0 && w.Alt[targetX+targetY*EndWidth] > 0
+	return w.hasBuildPresence(player, xoff, yoff, width, height, needTown)
+}
+
+func (w *World) hasBuildPresence(player, xoff, yoff, width, height int, needTown bool) bool {
 	if width <= 0 || height <= 0 {
 		return false
 	}
-	needTown := w.Level.GameMode&GameRaiseTown != 0
 	for y := 0; y < height; y++ {
 		mapY := yoff + y
 		if mapY < 0 || mapY >= MapHeight {
@@ -1023,15 +1044,14 @@ func (w *World) changeAltitude(player, x, y int, raise, paint bool) bool {
 	} else {
 		w.lowerPointTracked(x, y, bounds)
 	}
-	if bounds.changed == 0 {
+	if paint && bounds.changed == 0 {
 		return false
 	}
 
 	if !paint {
+		// Original sculpting charges its base cost even at altitude limits,
+		// and unlike battle losses does not cap a large terrain debt at -250.
 		w.Magnets[player].Mana -= bounds.changed*4 + ManaPointCost
-		if w.Magnets[player].Mana < ManaFloor {
-			w.Magnets[player].Mana = ManaFloor
-		}
 	}
 	w.rebuildAltitudeBounds(bounds)
 	return true
@@ -1163,6 +1183,10 @@ func (w *World) placeFirstPeople() {
 	for i := range w.Magnets {
 		w.Magnets[i] = Magnet{GoTo: center, Flags: SettleMode, Mana: 399}
 	}
+	// C++ conquest level_number is five times the displayed world index.
+	if w.Level.Number >= 248 {
+		w.Magnets[DevilPlayer].Mana = ManaQuakeCost + 200
+	}
 
 	godCount := int(w.Level.PlayerPopulation)
 	if godCount <= 0 {
@@ -1232,7 +1256,6 @@ func (w *World) placePeople(player, pos int, leader bool) {
 	w.MapWho[pos] = byte(index)
 	if leader {
 		w.Magnets[player].Carried = index
-		w.Magnets[player].GoTo = pos
 	}
 }
 
@@ -1251,11 +1274,15 @@ func (w *World) TickWithComputer(computerControlled [2]bool) {
 func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPlayer int) {
 	w.ComputerControlled = computerControlled
 	w.GameTurn++
-	if w.War {
-		w.setWarMagnets()
-	}
+	w.legacyTurn = legacyTurnState{active: true, advancedPlayer: advancedPlayer}
 	if w.ComputerControlled[GodPlayer] || w.ComputerControlled[DevilPlayer] {
-		w.updateComputerStats()
+		// The strategic AI intentionally evaluates the current world. The
+		// original AI consumes the statistics collected during the last tick.
+		if advancedPlayer >= 0 && advancedPlayer < 2 {
+			legacyStats := w.Computer[advancedPlayer^1]
+			w.updateComputerStats()
+			w.Computer[advancedPlayer^1] = legacyStats
+		}
 		for player, controlled := range w.ComputerControlled {
 			if controlled {
 				if player == advancedPlayer {
@@ -1266,16 +1293,28 @@ func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPla
 			}
 		}
 	}
-	for i := range w.Magnets {
-		w.Magnets[i].Population = 0
-		w.Magnets[i].NoTowns = 0
-		if w.GameTurn&1 == 0 {
-			w.Magnets[i].Mana++
+	orders := w.legacyTurn.orders
+	w.beginLegacyTurn()
+	w.legacyTurn.orders = orders
+	// A knight can acquire the carrier through a merger, not just Knight().
+	for player := range w.Magnets {
+		if carried := w.carriedPeepIndex(player); carried >= 0 && w.Peeps[carried].HeadFor != 0 {
+			w.Magnets[player].GoTo = w.Peeps[carried].AtPos
+			w.Magnets[player].Carried = 0
 		}
 	}
+	if w.War {
+		w.setWarMagnets()
+	}
+	for len(w.Peeps) > 0 && w.Peeps[len(w.Peeps)-1].Population <= 0 {
+		last := len(w.Peeps) - 1
+		w.zeroPopulation(last)
+		w.Peeps = w.Peeps[:last]
+	}
 
-	initialLen := len(w.Peeps)
-	for i := 0; i < initialLen && i < len(w.Peeps); i++ {
+	// Births appended to the table are processed during this same tick, just
+	// like births placed in a dead slot ahead of the current loop index.
+	for i := 0; i < len(w.Peeps) && i < MaxPeeps; i++ {
 		if w.Peeps[i].Population <= 0 {
 			continue
 		}
@@ -1292,22 +1331,24 @@ func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPla
 				w.zeroPopulation(i)
 				continue
 			}
-			if w.War {
-				w.forceRaiseAt(w.Peeps[i].AtPos%MapWidth, w.Peeps[i].AtPos/MapWidth)
+			if w.War || (w.ComputerControlled[player] && player != advancedPlayer && w.Level.GameMode&GameNoBuild == 0) {
+				w.legacyOrder(player, CommandRaise, w.Peeps[i].AtPos%MapWidth, w.Peeps[i].AtPos/MapWidth, 0)
+				w.markComputerAction(player)
+			}
+			w.Peeps[i].Population -= w.walkDeath() << 1
+			if w.Peeps[i].Population <= 0 {
+				w.zeroPopulation(i)
+				continue
 			}
 			if block != WaterBlock {
 				w.Peeps[i].Flags &^= InWater
 				w.setFrame(i)
+			} else {
+				// The original keeps a swimmer's animation frame until land
+				// is reached; no ordinary movement is processed in water.
 				continue
 			}
-			w.setFrame(i)
-			w.Peeps[i].Population -= w.walkDeath() << 1
-			if w.Peeps[i].Population <= 0 {
-				w.zeroPopulation(i)
-			}
-			continue
-		}
-		if block == WaterBlock {
+		} else if block == WaterBlock {
 			if w.Peeps[i].Flags&InTown != 0 {
 				w.setTown(i, true)
 			}
@@ -1315,7 +1356,6 @@ func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPla
 			if w.Peeps[i].Frame >= 8 {
 				w.Peeps[i].Frame = 0
 			}
-			continue
 		}
 
 		switch {
@@ -1323,19 +1363,6 @@ func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPla
 			if w.setFrame(i) {
 				w.Peeps[i].Flags &^= InEffect
 				w.setFrame(i)
-			}
-		case w.Peeps[i].Flags&InBattle != 0:
-			if w.Peeps[i].Flags == InBattle {
-				w.doBattle(i)
-			}
-		case w.Peeps[i].Flags&InRuin != 0:
-			if w.MapWho[w.Peeps[i].AtPos] == 0 {
-				w.MapWho[w.Peeps[i].AtPos] = byte(i + 1)
-			}
-			if w.Peeps[i].BattlePopulation <= 0 {
-				w.Peeps[i].Population = 0
-			} else {
-				w.Peeps[i].BattlePopulation--
 			}
 		case w.Peeps[i].Flags == InTown:
 			w.processTownWithLandAI(i, player != advancedPlayer)
@@ -1353,34 +1380,49 @@ func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPla
 				if w.ComputerControlled[player] && player != advancedPlayer {
 					w.computerOneBlockFlat(w.Peeps[i].AtPos, player)
 				}
+				if w.Computer[player^1].Best2 < 0 {
+					w.Computer[player^1].Best2 = i
+				}
 				w.moveExplorer(i)
-				if i < len(w.Peeps) && w.Peeps[i].Population > 0 && w.Peeps[i].InOut != 0 {
+				if w.Peeps[i].InOut != 0 {
 					if w.Peeps[i].InOut != w.Peeps[i].AtPos-w.Peeps[i].Direction {
 						w.Peeps[i].InOut = 0
 					}
-					w.Peeps[i].Population -= w.walkDeath()
 				}
+				w.Peeps[i].Population -= w.walkDeath()
 			}
-			if i < len(w.Peeps) && w.Peeps[i].Population <= 0 {
-				w.zeroPopulation(i)
-			}
+			w.signalWaitingOccupant(i)
 		case w.Peeps[i].Flags&(WaitForMe|IAmWaiting) != 0:
 			w.setFrame(i)
 			w.Peeps[i].Population -= w.walkDeath()
+			oldWait := w.Peeps[i].BattlePopulation
 			w.Peeps[i].BattlePopulation++
-			if w.Peeps[i].BattlePopulation > 14 {
+			if oldWait > 14 {
 				w.Peeps[i].Flags &^= WaitForMe | IAmWaiting
 				w.setFrame(i)
 				if w.Peeps[i].Flags == OnMove {
 					w.moveExplorer(i)
 				}
 			}
-			if i < len(w.Peeps) && w.Peeps[i].Population <= 0 {
-				w.zeroPopulation(i)
+		case w.Peeps[i].Flags&InBattle != 0:
+			if w.Peeps[i].Flags == InBattle {
+				w.doBattle(i)
+			}
+		case w.Peeps[i].Flags&InRuin != 0:
+			if w.MapWho[w.Peeps[i].AtPos] == 0 {
+				w.MapWho[w.Peeps[i].AtPos] = byte(i + 1)
+			}
+			oldRuin := w.Peeps[i].BattlePopulation
+			w.Peeps[i].BattlePopulation--
+			if oldRuin <= 0 {
+				w.Peeps[i].Population = 0
 			}
 		}
+		if w.Peeps[i].Population <= 0 {
+			w.zeroPopulation(i)
+		}
 	}
-	w.resetComputerActionSlots()
+	w.finishLegacyTurn()
 }
 
 func (w *World) updateComputerStats() {
@@ -1478,7 +1520,7 @@ func (w *World) computerSetMagnet(player int) bool {
 	}
 	if stats.NoTowns+stats.NoCastles < stats.Skill*2+15 || w.GameTurn%90 < 10+stats.Skill {
 		if w.Magnets[player].Flags == MagnetMode {
-			return w.SetMagnetMode(player, SettleMode+w.rng.next()%3)
+			return w.legacyOrder(player, CommandSetTendency, 0, 0, SettleMode+w.rng.next()%3)
 		}
 		return false
 	}
@@ -1488,7 +1530,7 @@ func (w *World) computerSetMagnet(player int) bool {
 	if imp < 0 {
 		if w.Magnets[player].Flags != MagnetMode {
 			stats.Arrived = 0
-			return w.SetMagnetMode(player, MagnetMode)
+			return w.legacyOrder(player, CommandSetTendency, 0, 0, MagnetMode)
 		}
 		return false
 	}
@@ -1499,15 +1541,15 @@ func (w *World) computerSetMagnet(player int) bool {
 	if w.Peeps[imp].Population < DevilMakesKnight*2 {
 		if stats.Arrived > 0 {
 			if inMap(stats.LastBattle) && w.Magnets[player].GoTo != stats.LastBattle {
-				return w.SetMagnetTo(player, stats.LastBattle)
+				return w.legacyOrder(player, CommandSetMagnet, stats.LastBattle%MapWidth, stats.LastBattle/MapWidth, 0)
 			}
 		} else if w.validPeep(stats.MyBest) && w.Magnets[player].GoTo != w.Peeps[stats.MyBest].AtPos {
 			stats.LastBattle = w.Peeps[stats.MyBest].AtPos
 			stats.Arrived = 2
-			return w.SetMagnetTo(player, stats.LastBattle)
+			return w.legacyOrder(player, CommandSetMagnet, stats.LastBattle%MapWidth, stats.LastBattle/MapWidth, 0)
 		}
 		if w.Magnets[player].Flags != MagnetMode {
-			return w.SetMagnetMode(player, MagnetMode)
+			return w.legacyOrder(player, CommandSetTendency, 0, 0, MagnetMode)
 		}
 		return false
 	}
@@ -1515,10 +1557,11 @@ func (w *World) computerSetMagnet(player int) bool {
 	if pope >= 0 && w.Peeps[imp].Population > w.Peeps[pope].Population+500 && w.Magnets[player^1].Flags == MagnetMode {
 		if stats.Mode&computerLeader != 0 {
 			if w.Magnets[player].Flags != MagnetMode {
-				return w.SetMagnetMode(player, MagnetMode)
+				return w.legacyOrder(player, CommandSetTendency, 0, 0, MagnetMode)
 			}
 			if w.Magnets[player].GoTo != w.Magnets[player^1].GoTo {
-				return w.SetMagnetTo(player, w.Magnets[player^1].GoTo)
+				pos := w.Magnets[player^1].GoTo
+				return w.legacyOrder(player, CommandSetMagnet, pos%MapWidth, pos/MapWidth, 0)
 			}
 		}
 		return false
@@ -1528,37 +1571,44 @@ func (w *World) computerSetMagnet(player int) bool {
 		if stats.Arrived == 0 && w.Magnets[player].GoTo != w.Peeps[stats.Best1].AtPos {
 			stats.LastBattle = w.Peeps[stats.Best1].AtPos
 			stats.Arrived = 2
-			return w.SetMagnetTo(player, stats.LastBattle)
+			return w.legacyOrder(player, CommandSetMagnet, stats.LastBattle%MapWidth, stats.LastBattle/MapWidth, 0)
 		}
 		if w.Magnets[player].Flags != MagnetMode {
-			return w.SetMagnetMode(player, MagnetMode)
+			return w.legacyOrder(player, CommandSetTendency, 0, 0, MagnetMode)
 		}
 	}
 	return false
 }
 
+// computerEffect reports whether the legacy decision consumes its action slot,
+// not whether it queued or applied a spell. The original swamp branch leaves
+// computer_done clear, allowing later terrain work to replace that order.
 func (w *World) computerEffect(player int) bool {
 	stats := &w.Computer[player]
 	mode := stats.Mode
 	if mode&computerWar != 0 && w.Magnets[player].Mana > ManaWarCost+999 {
-		populations := w.PlayerPopulations()
-		if populations[player] > populations[player^1] {
-			return w.WarPower(player)
+		if w.Magnets[player].Population > w.Magnets[player^1].Population {
+			return w.legacyOrder(player, CommandArmageddon, 0, 0, 0)
 		}
 	}
 	if mode&computerFlood != 0 && w.Magnets[player].Mana > ManaFloodCost+1999 {
-		return w.Flood(player)
+		return w.legacyOrder(player, CommandFlood, 0, 0, 0)
 	}
 	carried := w.carriedPeepIndex(player)
-	if mode&computerKnight != 0 && carried >= 0 && w.Peeps[carried].Population > DevilMakesKnight && w.Magnets[player].Mana > ManaKnightCost+500 {
-		return w.Knight(player)
+	if mode&computerKnight != 0 && carried >= 0 && w.Peeps[carried].Population > DevilMakesKnight {
+		if w.Magnets[player].Mana > ManaKnightCost+500 {
+			return w.legacyOrder(player, CommandKnight, 0, 0, 0)
+		}
+		// Reserve income for the knight instead of falling through to a
+		// cheaper spell. This does not consume a land-action slot.
+		return false
 	}
 	if !w.validPeep(stats.Best2) {
 		return false
 	}
 	if mode&computerVolcano != 0 && w.Magnets[player].Mana > ManaVolcanoCost+500 {
 		x, y := w.computerPowerTarget(player, stats.Best2)
-		if w.VolcanoAt(player, x, y) {
+		if w.legacyOrder(player, CommandVolcano, x, y, 0) {
 			stats.QuakeCount = 0
 			return true
 		}
@@ -1567,9 +1617,9 @@ func (w *World) computerEffect(player int) bool {
 		if (stats.QuakeCount >= stats.NoQuakes || mode&computerQuake == 0) && (stats.QuakeCount <= stats.NoSwamps || mode&computerVolcano == 0) {
 			enemyCarrier := w.carriedPeepIndex(player ^ 1)
 			if enemyCarrier >= 0 && (carried < 0 || w.Peeps[enemyCarrier].Population > w.Peeps[carried].Population) {
-				if w.SwampAt(player, w.Peeps[enemyCarrier].AtPos%MapWidth, w.Peeps[enemyCarrier].AtPos/MapWidth) {
+				if w.legacyOrder(player, CommandSwamp, w.Peeps[enemyCarrier].AtPos%MapWidth, w.Peeps[enemyCarrier].AtPos/MapWidth, 0) {
 					stats.QuakeCount++
-					return true
+					return false
 				}
 			}
 		}
@@ -1577,7 +1627,7 @@ func (w *World) computerEffect(player int) bool {
 	if mode&computerQuake != 0 && w.Magnets[player].Mana > ManaQuakeCost+500 && w.Peeps[stats.Best2].Flags == InTown {
 		if stats.QuakeCount < stats.NoQuakes || mode&(computerSwamp|computerVolcano) == 0 {
 			x, y := w.computerPowerTarget(player, stats.Best2)
-			if w.QuakeAt(player, x, y) {
+			if w.legacyOrder(player, CommandQuake, x, y, 0) {
 				stats.QuakeCount++
 				return true
 			}
@@ -1628,18 +1678,18 @@ func (w *World) computerMakeLevel(pos, player int) bool {
 		target := xx + yy*MapWidth
 		if int(w.MapBlk[target]) == RockBlock && w.Level.GameMode&GameOnlyRaise == 0 {
 			w.MapBlk[target]++
-			w.LowerAt(player, xx, yy)
+			w.legacyOrder(player, CommandLower, xx, yy, 0)
 			w.markComputerAction(player)
 			return false
 		}
 		diff := thisAlt - w.Alt[xx+yy*EndWidth]
 		if diff > 0 {
-			w.RaiseAt(player, xx, yy)
+			w.legacyOrder(player, CommandRaise, xx, yy, 0)
 			w.markComputerAction(player)
 			return false
 		}
 		if (diff < 0 || int(w.MapBlk[target]) == BadLand || int(w.MapBlk[target]) == SwampBlock) && w.Level.GameMode&GameOnlyRaise == 0 {
-			w.LowerAt(player, xx, yy)
+			w.legacyOrder(player, CommandLower, xx, yy, 0)
 			w.markComputerAction(player)
 			return false
 		}
@@ -1667,13 +1717,13 @@ func (w *World) computerOneBlockFlat(pos, player int) bool {
 			altPos := xx + yy*EndWidth
 			if mod == 3 {
 				if w.Alt[altPos] == avg {
-					w.RaiseAt(player, xx, yy)
+					w.legacyOrder(player, CommandRaise, xx, yy, 0)
 					w.markComputerAction(player)
 					return true
 				}
 			} else if mod == 1 && w.Level.GameMode&GameOnlyRaise == 0 {
 				if w.Alt[altPos] > avg {
-					w.LowerAt(player, xx, yy)
+					w.legacyOrder(player, CommandLower, xx, yy, 0)
 					w.markComputerAction(player)
 					return true
 				}
@@ -1720,14 +1770,19 @@ func (w *World) processTownWithLandAI(index int, legacyLandAI bool) {
 	if w.MapWho[peep.AtPos] == 0 {
 		w.MapWho[peep.AtPos] = byte(index + 1)
 	}
+	w.collectLegacyTown(index, life)
 
 	if legacyLandAI && w.ComputerControlled[player] && w.computerActionReady(player) {
 		if int(w.MapAlt[peep.AtPos]) == 0 {
 			if !peep.LandComplete || oldFrame != peep.Frame || w.townHasFlatFootprint(peep.AtPos) {
 				peep.LandComplete = w.computerMakeLevel(peep.AtPos, player)
+				// The original assigns make_level's result to the same status
+				// byte used by battle notifications. Keep just one marker.
+				peep.Status = 0
 			}
 		} else if w.Computer[player].NoTowns+w.Computer[player].NoCastles*3 < 3 && w.GameTurn > 250 {
-			peep.LandComplete = w.computerMakeLevel(peep.AtPos, player)
+			// The high-town branch deliberately ignores make_level's return.
+			w.computerMakeLevel(peep.AtPos, player)
 		}
 	}
 
@@ -1739,6 +1794,10 @@ func (w *World) processTownWithLandAI(index int, legacyLandAI bool) {
 		stage = len(w.Rules.PopulationAdd) - 1
 	}
 	if w.GameTurn&7 == 0 {
+		if legacyLandAI && peep.Frame == LastTown && peep.Population > MaxFood && w.ComputerControlled[player] && w.Computer[player].DoneTurn == 0 {
+			life = MaxFood
+			w.markComputerAction(player)
+		}
 		w.Magnets[player].Mana += w.Rules.ManaAdd[stage]
 		peep.Weapons = w.Rules.WeaponsAdd[stage]
 		if peep.Population > life {
@@ -2020,22 +2079,39 @@ func (w *World) joinBattle(joinerIndex, battleIndex int) {
 	if targetIndex < 0 || targetIndex >= len(w.Peeps) || targetIndex == joinerIndex {
 		return
 	}
-	w.joinForces(joinerIndex, targetIndex)
+	// Reinforcements join their side even when that side is defending a town.
+	// Unlike an ordinary meeting, joining a battle must keep its flags/frame.
+	w.mergePeepPopulation(joinerIndex, targetIndex)
 }
 
 func (w *World) joinForces(sourceIndex, targetIndex int) {
 	if sourceIndex < 0 || sourceIndex >= len(w.Peeps) || targetIndex < 0 || targetIndex >= len(w.Peeps) || sourceIndex == targetIndex {
 		return
 	}
+	if w.Peeps[sourceIndex].HeadFor != 0 && w.Peeps[targetIndex].Flags == InTown {
+		return
+	}
+	if !w.mergePeepPopulation(sourceIndex, targetIndex) {
+		return
+	}
+	target := &w.Peeps[targetIndex]
+	target.Flags &^= WaitForMe | IAmWaiting
+	if target.Flags == 0 {
+		target.Flags = OnMove
+	}
+	target.Frame = 0
+}
+
+// mergePeepPopulation is the common transfer in join_forces/join_battle.
+// Intelligence and AI status belong to the surviving group, not its recruits.
+func (w *World) mergePeepPopulation(sourceIndex, targetIndex int) bool {
+	if sourceIndex < 0 || sourceIndex >= len(w.Peeps) || targetIndex < 0 || targetIndex >= len(w.Peeps) || sourceIndex == targetIndex {
+		return false
+	}
 	source := &w.Peeps[sourceIndex]
 	target := &w.Peeps[targetIndex]
 	if source.Population <= 0 || target.Population <= 0 || source.Player != target.Player {
-		return
-	}
-	sourceWasKnight := source.HeadFor != 0
-	sourceHeadFor := source.HeadFor
-	if sourceWasKnight && target.Flags&InTown != 0 {
-		return
+		return false
 	}
 	if source.Flags&InTown != 0 {
 		w.setTown(sourceIndex, true)
@@ -2047,18 +2123,21 @@ func (w *World) joinForces(sourceIndex, targetIndex int) {
 	} else {
 		target.Population += sourcePopulation
 	}
-	if target.IQ < source.IQ {
-		target.IQ = source.IQ
-	}
 	if target.Weapons < source.Weapons {
 		target.Weapons = source.Weapons
 	}
-	if sourceWasKnight {
-		target.Status = KnightStatus
-		target.HeadFor = sourceHeadFor
+	if source.HeadFor != 0 {
+		target.HeadFor = source.HeadFor
 	}
-	if player := int(source.Player); player >= 0 && player < len(w.Magnets) && w.Magnets[player].Carried == sourceIndex+1 {
-		w.Magnets[player].Carried = targetIndex + 1
+	if player := int(source.Player); player >= 0 && player < len(w.Magnets) {
+		if w.Magnets[player].Carried == sourceIndex+1 {
+			w.Magnets[player].Carried = targetIndex + 1
+		}
+		if targetIndex > sourceIndex {
+			// The ascending people loop counted the source already, but will
+			// count the enlarged target later in this same tick.
+			w.Magnets[player].Population -= sourcePopulation
+		}
 	}
 
 	w.clearPeepMapRefs(sourceIndex)
@@ -2069,13 +2148,7 @@ func (w *World) joinForces(sourceIndex, targetIndex int) {
 	source.BattlePopulation = 0
 	source.HeadFor = 0
 	source.Status = 0
-	target.Flags &^= WaitForMe | IAmWaiting
-	if target.Flags == 0 {
-		target.Flags = OnMove
-	}
-	if target.Flags&InBattle == 0 {
-		target.Frame = 0
-	}
+	return true
 }
 
 func (w *World) doBattle(index int) {
@@ -2091,8 +2164,8 @@ func (w *World) doBattle(index int) {
 		return
 	}
 
-	peepPower := w.Peeps[index].Population * (w.rng.next()%3 + 1)
 	opponentPower := w.Peeps[opponentIndex].Population * (w.rng.next()%3 + 1)
+	peepPower := w.Peeps[index].Population * (w.rng.next()%3 + 1)
 	if opponentPower > peepPower {
 		w.Peeps[opponentIndex].Population -= (peepPower/100)*w.Peeps[index].Weapons + 10
 		w.Peeps[index].Population -= (peepPower/100)*w.Peeps[opponentIndex].Weapons + 10
@@ -2160,10 +2233,21 @@ func (w *World) battleOver(winnerIndex, loserIndex int) {
 	winnerPlayer := int(winnerPtr.Player)
 	loserPlayer := int(loser.Player)
 	if winnerPlayer >= 0 && winnerPlayer < len(w.Magnets) {
+		if winnerPtr.Status != 0 || winnerPtr.LandComplete {
+			w.Computer[winnerPlayer].LastBattle = winnerPtr.AtPos
+			w.Computer[winnerPlayer].Arrived = 2
+			if winnerPtr.Status != 0 {
+				winnerPtr.Status--
+			}
+			winnerPtr.LandComplete = false
+		}
 		w.BattleWon[winnerPlayer]++
 		w.Magnets[winnerPlayer].Mana += reward
 	}
 	if loserPlayer >= 0 && loserPlayer < len(w.Magnets) {
+		if loser.Status != 0 || loser.LandComplete {
+			w.Computer[loserPlayer].Arrived = 0
+		}
 		w.Magnets[loserPlayer].Mana -= reward
 		if w.Magnets[loserPlayer].Mana < ManaFloor {
 			w.Magnets[loserPlayer].Mana = ManaFloor
@@ -2370,7 +2454,7 @@ func (w *World) moveMagnetPeeps(index int) int {
 	if !inMap(target) {
 		return noMove
 	}
-	return w.moveToward(index, target, true)
+	return w.moveToward(index, target, peep.HeadFor != 0)
 }
 
 func (w *World) moveToward(index, target int, avoidSwamp bool) int {
@@ -2409,17 +2493,35 @@ func (w *World) moveToward(index, target int, avoidSwamp bool) int {
 
 func (w *World) canMoveToward(peep *Peep, delta int, avoidSwamp, allowWarSpecial bool) bool {
 	move := w.validMove(peep.AtPos, delta)
-	if move == 0 {
-		return !avoidSwamp || int(w.MapBlk[peep.AtPos+delta]) != SwampBlock
-	}
-	if !w.War || !allowWarSpecial {
-		return false
-	}
-	if move == 2 {
+	target := peep.AtPos + delta
+	if move == 0 && inMap(target) && (!avoidSwamp || int(w.MapBlk[target]) != SwampBlock) {
 		return true
 	}
-	if move == 3 {
-		w.forceRaiseAt(peep.AtPos%MapWidth, peep.AtPos/MapWidth)
+	// Only the first, desired direction can request terrain work. Alternative
+	// directions merely look for a route around the obstruction, as in
+	// populous_peeps.cpp:669-685 (before the eight-direction fallback loop).
+	if !allowWarSpecial {
+		return false
+	}
+	if move == 2 && w.War {
+		return true
+	}
+	player := int(peep.Player)
+	if player < 0 || player >= len(w.ComputerControlled) {
+		return false
+	}
+	legacyComputer := w.ComputerControlled[player] && (!w.legacyTurn.active || player != w.legacyTurn.advancedPlayer)
+	if (legacyComputer || w.War) && (w.Level.GameMode&GameNoBuild == 0 || w.War) {
+		raiseAt := -1
+		if move == 3 {
+			raiseAt = peep.AtPos
+		} else if !w.War && w.Level.GameMode&GameOnlyRaise == 0 && inMap(target) && int(w.MapBlk[target]) == SwampBlock {
+			raiseAt = target
+		}
+		if inMap(raiseAt) {
+			w.legacyOrder(player, CommandRaise, raiseAt%MapWidth, raiseAt/MapWidth, 0)
+			w.markComputerAction(player)
+		}
 	}
 	return false
 }
@@ -2755,6 +2857,9 @@ func (w *World) zeroPopulation(index int) {
 	for i := range w.Magnets {
 		if w.Magnets[i].Carried == index+1 {
 			w.Magnets[i].Carried = 0
+			if inMap(w.Peeps[index].AtPos) {
+				w.Magnets[i].GoTo = w.Peeps[index].AtPos
+			}
 		}
 	}
 	w.Peeps[index].Population = 0

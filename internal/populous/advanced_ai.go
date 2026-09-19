@@ -300,9 +300,8 @@ func (w *World) advancedLand(player int) bool {
 		if p.Population <= 0 || int(p.Player) != player || p.Flags != OnMove || isHeadedPeep(p) || !inMap(p.AtPos) {
 			continue
 		}
-		if w.Level.GameMode&GameRaiseTown != 0 && !w.HasBuildPresence(player, p.AtPos%MapWidth-4, p.AtPos/MapWidth-4, 9, 9) {
-			continue
-		}
+		// advancedFoundingTile checks each actual corner, including the
+		// original sea-level exception to town-only construction.
 		if w.advancedFoundingTile(player, p.AtPos) {
 			return true
 		}
@@ -440,7 +439,7 @@ func (w *World) advancedFinishRepair(player int) bool {
 		return false
 	}
 	raise := w.Alt[point] < target
-	if !w.HasBuildPresence(player, point%EndWidth-3, point/EndWidth-3, 8, 8) {
+	if !w.HasBuildPresenceAt(player, point%EndWidth-3, point/EndWidth-3, 8, 8, point%EndWidth, point/EndWidth) {
 		stats.Arrived = 0
 		return false
 	}

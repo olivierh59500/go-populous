@@ -14,6 +14,9 @@ func TestSimulationBuildMismatchRejectsBothDirections(t *testing.T) {
 	for _, ids := range [][2]string{
 		{"go-populous-lockstep-2", "go-populous-lockstep-1"},
 		{"go-populous-lockstep-1", "go-populous-lockstep-2"},
+		{"go-populous-lockstep-3", "go-populous-lockstep-2"},
+		{"go-populous-lockstep-2", "go-populous-lockstep-3"},
+		{"go-populous-lockstep-3", "go-populous-lockstep-1"},
 	} {
 		t.Run(ids[0]+"_vs_"+ids[1], func(t *testing.T) {
 			hostConn, clientConn := net.Pipe()

@@ -7,12 +7,14 @@ import (
 )
 
 func TestOriginalComputerReference(t *testing.T) {
-	// Baselines include the symmetric engine fixes for recycled people slots
-	// and knights crossing friendly towns; the legacy AI controller is unchanged.
+	// Engine-3 regression baselines, after restoring C++ initialization, turn
+	// ordering, attrition, combat and the original AI's missing behaviours.
+	// These detect changes in Go replays; the independent C++ oracle checks
+	// original-source parity rather than treating these Go hashes as proof.
 	for seed, want := range map[uint16]string{
-		25:    "e2611dfdc7dda9a57795f2379a6e7741e67c7c821984fa9f2e0b383496c64cda",
-		27068: "909c13e6b843c1a55e43dfc5ab0894612639c1365478f1ac6cc3e0734f773e3e",
-		4321:  "1b3d0dd095709c17aff483b540ca3bf7de3fe993f19d0b8c0fa8acff131235d5",
+		25:    "d79591ad876f40acab6065de2e9641ed22f3125b3016491df9cb1bd96fc7dcbb",
+		27068: "d27f8c8030efae8a84bed97e14a343107ac0680cc86a6981ea3c3a5628b7b829",
+		4321:  "2e65e3c342d51612ea5f5381ec7e918de79289253e73ec2cea8892640f54988b",
 	} {
 		w := GenerateWorld(Level{SeedOffset: seed, PlayerPopulation: 10, EnemyPopulation: 10, PlayerPowers: 0x3f, EnemyPowers: 0x3f, EnemyRating: 5, EnemyReactionSpeed: 3})
 		for tick := 0; tick < 512; tick++ {
