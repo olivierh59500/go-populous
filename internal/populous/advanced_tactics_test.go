@@ -215,7 +215,7 @@ func TestAdvancedNoBuildPolicyPreservesEconomyAndActionRules(t *testing.T) {
 	}
 }
 
-func TestAdvancedNoBuildCampaignVictories(t *testing.T) {
+func TestAdvancedNoBuildCampaignRulesAndSnapshot(t *testing.T) {
 	f, err := os.Open("../../assets/amiga/level.dat")
 	if err != nil {
 		t.Fatal(err)
@@ -233,8 +233,10 @@ func TestAdvancedNoBuildCampaignVictories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// These are actual eliminations in both strategic camps, with the original
-	// restrictions/resources. The other no-build maps remain in the full audit.
+	// These two worlds used to be wins with the pre-parity engine/maps. That
+	// performance observation is not a game-rule invariant: restoring the
+	// historical map, mana and opponent changes their outcomes. Keep the hard
+	// cases as full-length rule/determinism checks; ai-audit reports wins/losses.
 	for _, tc := range []struct{ level, player int }{{163, DevilPlayer}, {304, GodPlayer}} {
 		t.Run(fmt.Sprintf("world%d_side%d", tc.level, tc.player), func(t *testing.T) {
 			level := levels[tc.level]
@@ -242,13 +244,26 @@ func TestAdvancedNoBuildCampaignVictories(t *testing.T) {
 				t.Fatal("fixture no longer has the expected campaign restrictions")
 			}
 			w := GenerateWorldWithRules(level, rules)
+			restored := WorldFromSnapshot(w.Snapshot(), rules)
 			for w.GameTurn < 20*60*8 && campaignOutcome(w, tc.player) == "ongoing" {
 				w.TickWithAdvancedComputer(tc.player)
+				restored.TickWithAdvancedComputer(tc.player)
 				w.DrainSoundEvents()
+				restored.DrainSoundEvents()
+				if w.Level != level || w.Rules != rules {
+					t.Fatal("strategic AI changed campaign restrictions or terrain rules")
+				}
+				if w.GameTurn%512 == 0 {
+					if w.StateHash() != restored.StateHash() {
+						t.Fatalf("snapshot diverged at tick %d", w.GameTurn)
+					}
+					restored = WorldFromSnapshot(restored.Snapshot(), rules)
+				}
 			}
-			if got := campaignOutcome(w, tc.player); got != "win" {
-				t.Fatalf("no-build expedition outcome=%s, living populations=%v", got, w.PlayerPopulations())
+			if w.StateHash() != restored.StateHash() {
+				t.Fatal("restored campaign ended in a different state")
 			}
+			t.Logf("corrected-engine observation: outcome=%s, ticks=%d, living populations=%v", campaignOutcome(w, tc.player), w.GameTurn, w.PlayerPopulations())
 		})
 	}
 }

@@ -295,6 +295,22 @@ remain separate. `-side both` keeps each original level's asymmetric resources
 and swaps which side uses the strategic controller. The CSV records terminal
 state hashes, and its ordering is independent of the number of workers.
 
+The engine-3 parity corrections restore the original C++ landscape generation,
+legacy AI turn ordering, population and combat rules. Historical engine-2 AI
+results are not current performance claims. See the
+[implementation and validation report](docs/ENGINE_PARITY_FIXES_2026-09-19.md).
+Existing saves remain readable; multiplayer rejects older simulation builds.
+
+When the original C++ project is available under `previous/DCPopulous-master`
+and `c++` is installed, run the optional compiled-source comparisons:
+
+```sh
+go test -tags cpporacle ./internal/populous -run '^TestCPPOracle' -count=1 -v
+```
+
+The normal suite also contains an independently obtained fingerprint of all 495
+original landscapes, so it does not require distributing the historical sources.
+
 Build a local binary with:
 
 ```sh

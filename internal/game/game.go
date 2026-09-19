@@ -1858,7 +1858,7 @@ func (g *Game) centerOnNextOwnPeep(headedOnly bool) {
 		if peep.Population <= 0 || int(peep.Player) != g.player {
 			continue
 		}
-		if headedOnly && !peepLooksLikeKnight(peep) {
+		if headedOnly && !g.peepLooksLikeKnight(peep) {
 			continue
 		}
 		if !headedOnly && peep.Flags != populous.InTown {
@@ -2436,21 +2436,21 @@ func (g *Game) viewedPeepSprite(peep populous.Peep) (frame, x int) {
 	}
 	if peep.Flags&(populous.WaitForMe|populous.IAmWaiting) != 0 {
 		frame = populous.FirstWaitSprite + (g.tick & 1)
-		if peepLooksLikeKnight(peep) {
+		if g.peepLooksLikeKnight(peep) {
 			frame = populous.KnightWaitSprite + (g.tick & 1)
 		}
 		return frame + int(peep.Player)*2, 272
 	}
 	if peep.Flags&populous.InWater != 0 {
 		frame = populous.FirstWaterSprite + (g.world.GameTurn & 3)
-		if peepLooksLikeKnight(peep) {
+		if g.peepLooksLikeKnight(peep) {
 			frame = populous.FirstKnightWater + (g.world.GameTurn & 3)
 		}
 		return frame + int(peep.Player)*4, 272
 	}
 	_, _, frame = peepMotion(peep.Direction)
 	frame += g.tick & 1
-	if peepLooksLikeKnight(peep) {
+	if g.peepLooksLikeKnight(peep) {
 		frame += populous.KnightPeople
 	}
 	return frame + int(peep.Player)*populous.BadPeople, 272
@@ -2574,7 +2574,7 @@ func (g *Game) playerCanSculptView(player byte) bool {
 	if g.world == nil {
 		return false
 	}
-	return g.world.HasBuildPresence(int(player), g.xoff, g.yoff, 8, 8)
+	return g.world.HasBuildPresenceAt(int(player), g.xoff, g.yoff, 8, 8, g.hoverX, g.hoverY)
 }
 
 func (g *Game) drawAtlasPreview(screen *ebiten.Image) {
@@ -2884,7 +2884,7 @@ func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy
 		return populous.FireSprite + (g.tick & 3), 0, 0
 	case peep.Flags&populous.InEffect != 0:
 		playerOffset := int(peep.Player) * 4
-		if peepLooksLikeKnight(peep) {
+		if g.peepLooksLikeKnight(peep) {
 			return peep.Frame + populous.KnightWinSprite - populous.VictorySprite + playerOffset, 8, 0
 		}
 		return peep.Frame + playerOffset, 8, 0
@@ -2892,7 +2892,7 @@ func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy
 		return g.battleSpriteFrame(peep), 8, 0
 	case peep.Flags&(populous.WaitForMe|populous.IAmWaiting) != 0:
 		frame := peep.Frame
-		if peepLooksLikeKnight(peep) {
+		if g.peepLooksLikeKnight(peep) {
 			frame = populous.KnightWaitSprite + (g.tick & 1)
 		}
 		if peep.Player == populous.DevilPlayer {
@@ -2901,7 +2901,7 @@ func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy
 		return frame, 8, 0
 	case peep.Flags&populous.InWater != 0:
 		frame := populous.FirstWaterSprite + (g.tick & 3)
-		if peepLooksLikeKnight(peep) {
+		if g.peepLooksLikeKnight(peep) {
 			frame = populous.FirstKnightWater + (g.tick & 3)
 		}
 		if peep.Player == populous.DevilPlayer {
@@ -2914,7 +2914,7 @@ func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy
 		if peep.Player == populous.DevilPlayer {
 			frame += populous.BadPeople
 		}
-		if peepLooksLikeKnight(peep) {
+		if g.peepLooksLikeKnight(peep) {
 			frame += populous.KnightPeople
 		}
 		dx = peep.Frame * stepX
@@ -2930,12 +2930,12 @@ func (g *Game) peepSpriteFrame(sourcePos int, peep populous.Peep) (frame, dx, dy
 }
 
 func (g *Game) battleSpriteFrame(peep populous.Peep) int {
-	if !peepLooksLikeKnight(peep) {
+	if !g.peepLooksLikeKnight(peep) {
 		return peep.Frame
 	}
 	opponentIsKnight := false
 	if peep.BattlePopulation >= 0 && peep.BattlePopulation < len(g.world.Peeps) {
-		opponentIsKnight = peepLooksLikeKnight(g.world.Peeps[peep.BattlePopulation])
+		opponentIsKnight = g.peepLooksLikeKnight(g.world.Peeps[peep.BattlePopulation])
 	}
 	offset := peep.Frame - populous.BattleFirstFrame
 	if opponentIsKnight {
@@ -2947,8 +2947,11 @@ func (g *Game) battleSpriteFrame(peep populous.Peep) int {
 	return populous.RedVsPeepSprite + offset
 }
 
-func peepLooksLikeKnight(peep populous.Peep) bool {
-	return peep.Status == populous.KnightStatus || peep.HeadFor != 0
+func (g *Game) peepLooksLikeKnight(peep populous.Peep) bool {
+	// Status is the original one-shot battle notification, not a permanent
+	// sprite tag. Preserve the deliberate Armageddon knight presentation.
+	return peep.Status == populous.KnightStatus || peep.HeadFor != 0 ||
+		(g.world != nil && g.world.War && peep.Population > 0 && peep.Flags&populous.InRuin == 0)
 }
 
 func peepMotion(direction int) (stepX, stepY, baseFrame int) {

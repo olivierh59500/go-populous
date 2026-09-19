@@ -52,3 +52,6 @@ android/keystore/
 # Editor/IDE
 # .idea/
 # .vscode/
+
+.gitignore
+docs/

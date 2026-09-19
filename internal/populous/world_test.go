@@ -172,8 +172,9 @@ func TestJoinForcesTransfersPopulationAndMagnet(t *testing.T) {
 	if world.Peeps[1].Population != 70 {
 		t.Fatalf("joined population = %d, want 70", world.Peeps[1].Population)
 	}
-	if world.Peeps[1].IQ != 3 || world.Peeps[1].Weapons != 5 {
-		t.Fatalf("joined stats IQ/weapons = %d/%d, want 3/5", world.Peeps[1].IQ, world.Peeps[1].Weapons)
+	// join_forces transfers the best weapons, not the source's exploration IQ.
+	if world.Peeps[1].IQ != 1 || world.Peeps[1].Weapons != 5 {
+		t.Fatalf("joined stats IQ/weapons = %d/%d, want 1/5", world.Peeps[1].IQ, world.Peeps[1].Weapons)
 	}
 	if world.Magnets[GodPlayer].Carried != 2 {
 		t.Fatalf("carried peep = %d, want 2", world.Magnets[GodPlayer].Carried)
@@ -565,6 +566,7 @@ func TestComputerUsesWarWhenStrongerAndUnlocked(t *testing.T) {
 	}
 	world.MapWho[world.Peeps[0].AtPos] = 1
 	world.MapWho[world.Peeps[1].AtPos] = 2
+	preparePreviousTurnComputerStats(world)
 
 	world.Tick()
 
@@ -595,6 +597,7 @@ func TestComputerControlCanRunGodSide(t *testing.T) {
 	}
 	world.MapWho[world.Peeps[0].AtPos] = 1
 	world.MapWho[world.Peeps[1].AtPos] = 2
+	preparePreviousTurnComputerStats(world)
 
 	world.TickWithComputer([2]bool{true, false})
 
@@ -623,6 +626,7 @@ func TestComputerVolcanoTargetsOldEnemyTown(t *testing.T) {
 	}
 	world.MapWho[townPos] = 1
 	world.MapWho[world.Peeps[1].AtPos] = 2
+	preparePreviousTurnComputerStats(world)
 
 	world.Tick()
 
@@ -689,11 +693,22 @@ func TestComputerVolcanoCanTargetMovingEnemyLikeOriginal(t *testing.T) {
 	}
 	world.MapWho[enemyPos] = 1
 	world.MapWho[world.Peeps[1].AtPos] = 2
+	preparePreviousTurnComputerStats(world)
 
 	world.Tick()
 
 	if world.Magnets[DevilPlayer].Mana != 501 {
 		t.Fatalf("devil mana after moving-target volcano = %d, want 501", world.Magnets[DevilPlayer].Mana)
+	}
+}
+
+// These decision fixtures describe a world whose previous movement pass has
+// already collected targets and populations. The original AI reads that state
+// before processing the next pass; it does not rescan the map before deciding.
+func preparePreviousTurnComputerStats(world *World) {
+	world.updateComputerStats()
+	for player, population := range world.PlayerPopulations() {
+		world.Magnets[player].Population = population
 	}
 }
 
