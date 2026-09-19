@@ -1,0 +1,54 @@
+--- a/internal/populous/world.go
++++ b/internal/populous/world.go
+@@ -1759,13 +1759,26 @@
+ }
+ 
+ func (w *World) spawnWalkerFromTown(index, life int) {
+-	if index < 0 || index >= len(w.Peeps) || len(w.Peeps) >= MaxPeeps {
++	if index < 0 || index >= len(w.Peeps) {
+ 		return
+ 	}
+ 	town := &w.Peeps[index]
+ 	if life <= 0 || town.Population <= life {
+ 		return
++	}
++	newIndex := -1
++	for i := range w.Peeps {
++		if w.Peeps[i].Population <= 0 {
++			newIndex = i
++			break
++		}
+ 	}
++	if newIndex < 0 {
++		if len(w.Peeps) >= MaxPeeps {
++			return
++		}
++		newIndex = len(w.Peeps)
++	}
+ 	walkerPopulation := town.Population - (life >> 1)
+ 	town.Population = life >> 1
+ 	walker := Peep{
+@@ -1780,8 +1793,12 @@
+ 	if town.IQ < MaxMensa {
+ 		town.IQ++
+ 	}
+-	w.Peeps = append(w.Peeps, walker)
+-	newIndex := len(w.Peeps)
++	if newIndex == len(w.Peeps) {
++		w.Peeps = append(w.Peeps, walker)
++	} else {
++		w.Peeps[newIndex] = walker
++	}
++	newIndex++
+ 	if w.MapWho[walker.AtPos] == 0 || w.MapWho[walker.AtPos] == byte(index+1) {
+ 		w.MapWho[walker.AtPos] = byte(newIndex)
+ 	}
+@@ -1938,7 +1955,7 @@
+ 	}
+ 	if mover.Player == found.Player {
+ 		w.joinForces(moverIndex, foundIndex)
+-		return false
++		return w.Peeps[moverIndex].Population > 0
+ 	}
+ 
+ 	w.setBattle(moverIndex, foundIndex)

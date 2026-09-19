@@ -24,6 +24,14 @@ type touchInputState struct {
 
 func (g *Game) updateTouchInput() {
 	g.touch.update()
+	if g.mobileMenuActive() {
+		g.updateMobileFrontInput()
+		return
+	}
+	if g.mobileSceneActive() {
+		g.updateMobileInput()
+		return
+	}
 	layout := g.touchLayout()
 	if layout.Enabled && ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		x, y := ebiten.CursorPosition()

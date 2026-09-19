@@ -1,8 +1,10 @@
 package com.olivierh.populous;
 
 import android.app.Activity;
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -13,6 +15,8 @@ import com.olivierh.populous.mobile.Mobile;
 
 import go.Seq;
 
+import java.io.File;
+
 public final class MainActivity extends Activity {
     private EbitenView ebitenView;
 
@@ -22,6 +26,17 @@ public final class MainActivity extends Activity {
 
         Seq.setContext(getApplicationContext());
         Mobile.setFilesDir(getFilesDir().getAbsolutePath());
+        // Explicit, development-only capture: never microphone or system audio.
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            String captureName = getIntent().getStringExtra("capture_audio");
+            if (captureName != null && captureName.matches("[A-Za-z0-9_-]{1,80}\\.jsonl")) {
+                try {
+                    Mobile.setAudioCapturePath(new File(getFilesDir(), captureName).getAbsolutePath());
+                } catch (Exception error) {
+                    Log.w("Populous", "Cannot start source audio capture", error);
+                }
+            }
+        }
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -40,6 +55,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        Mobile.cancelInput();
         if (ebitenView != null) {
             ebitenView.suspendGame();
         }

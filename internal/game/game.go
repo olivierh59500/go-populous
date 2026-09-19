@@ -7,14 +7,17 @@ import (
 	"image"
 	"image/color"
 	"os"
+	"sync/atomic"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"go-populous/internal/assets"
+	"go-populous/internal/attract"
 	"go-populous/internal/fixedstep"
 	"go-populous/internal/populous"
+	"go-populous/internal/recording"
 )
 
 const (
@@ -169,6 +172,8 @@ const (
 	StateEnd
 	StateHelp
 	StateLord
+	StateDemo
+	StateIntro
 )
 
 type ActionMode int
@@ -188,6 +193,16 @@ type Game struct {
 	layoutWidth        int
 	updateScheduler    *fixedstep.Scheduler
 	touch              touchInputState
+	mobileUI           *mobilePresentation
+	mobileInputReset   atomic.Bool
+	intro              *introPresentation
+	demo               *demoPlayback
+	demoIdle           *attract.Idle
+	demoInput          demoInputState
+	demoSeed           uint64
+	demoWorldIndex     int
+	demoLevels         []populous.Level
+	recording          *demoRecording
 	images             map[string]*ebiten.Image
 	landFrames         [][]*ebiten.Image
 	spriteFrames       []*ebiten.Image
@@ -239,6 +254,7 @@ type Game struct {
 	savePath           string
 	world              *populous.World
 	soundBank          *populous.SoundBank
+	audioTrace         *recording.AudioTrace
 	audioInitialized   bool
 	sound              *soundPlayer
 	network            *networkGame
@@ -249,6 +265,9 @@ func New(bundle *assets.Bundle) *Game {
 		bundle:             bundle,
 		layoutWidth:        logicalWidth,
 		updateScheduler:    fixedstep.New(simulationTPS, simulationTPS),
+		demoIdle:           attract.NewIdle(attract.DefaultIdleTicks),
+		demoWorldIndex:     -1,
+		demoLevels:         append([]populous.Level(nil), bundle.Levels...),
 		images:             map[string]*ebiten.Image{},
 		player:             populous.GodPlayer,
 		computerControlled: [2]bool{false, true},
@@ -289,6 +308,7 @@ func New(bundle *assets.Bundle) *Game {
 // called before the game loop starts.
 func (g *Game) SetSavePath(path string) {
 	g.savePath = path
+	g.loadMobilePreferences()
 }
 
 // SetUpdateTPS sets the rate at which Ebitengine calls Update. Populous' game
@@ -332,12 +352,20 @@ func horizontalImageFrames(atlas *ebiten.Image, frameWidth, frameHeight int) []*
 }
 
 func (g *Game) Update() error {
+	if g.recording != nil {
+		return g.updateDemoRecording()
+	}
 	if !g.audioInitialized {
 		g.audioInitialized = true
-		g.sound = newSoundPlayer(g.soundBank)
+		g.sound = newSoundPlayer(g.soundBank, g.audioTrace)
 		g.soundBank = nil
 	}
+	if g.updateIntro() {
+		return nil
+	}
+	g.syncMobilePresentation()
 	g.updateTouchInput()
+	g.sampleDemoInput()
 	if g.updateScheduler == nil {
 		g.updateScheduler = fixedstep.New(simulationTPS, simulationTPS)
 	}
@@ -357,11 +385,17 @@ func (g *Game) updateTick() error {
 	if g.sound != nil {
 		g.sound.Update()
 	}
+	if g.updateDemo() {
+		return nil
+	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyF) {
 		g.fullscreen = !g.fullscreen
 		ebiten.SetFullscreen(g.fullscreen)
 	}
-	if g.handleTouchInput() {
+	if g.mobileMenuActive() {
+		return nil
+	}
+	if !g.mobileSceneActive() && g.handleTouchInput() {
 		return nil
 	}
 
@@ -373,6 +407,9 @@ func (g *Game) updateTick() error {
 	case StateOptions:
 		g.handleOptionsInput()
 	case StateGame:
+		if g.mobileSceneActive() {
+			return g.updateMobileGameTick()
+		}
 		g.advanceViewedPeep()
 		if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 			if g.multiplayerEnabled() {
@@ -444,6 +481,9 @@ func (g *Game) updateTick() error {
 			}
 		}
 	case StateEnd:
+		if g.mobileSceneActive() {
+			return nil
+		}
 		if g.multiplayerEnabled() {
 			if inpututil.IsKeyJustPressed(ebiten.KeyEscape) || inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeySpace) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 				g.stopMultiplayer()
@@ -1547,6 +1587,23 @@ func absInt(value int) int {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	if g.state == StateDemo {
+		g.drawDemo(screen)
+		return
+	}
+	if g.state == StateIntro {
+		g.drawIntro(screen)
+		return
+	}
+	if g.mobileMenuActive() {
+		layout := g.mobileFrontLayout()
+		g.drawMobileFront(screen, layout, g.mobileFrontState(layout))
+		return
+	}
+	if g.mobileSceneActive() {
+		g.drawMobileGame(screen)
+		return
+	}
 	if g.frameCache == nil {
 		g.drawFrame(screen)
 		return
@@ -1586,6 +1643,13 @@ func (g *Game) drawFrame(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
+	if g.state == StateDemo {
+		return demoWidth, demoHeight
+	}
+	if g.mobileSceneActive() || g.mobileMenuActive() {
+		g.layoutWidth = clampInt((outsideWidth*logicalHeight+max(1, outsideHeight)-1)/max(1, outsideHeight), logicalWidth, 800)
+		return g.layoutWidth, logicalHeight
+	}
 	g.layoutWidth = touchLogicalWidth(outsideWidth, outsideHeight)
 	return g.layoutWidth, logicalHeight
 }
@@ -1764,6 +1828,9 @@ func (g *Game) centerOnMapTile(x, y int) {
 	g.xoff = x - 3
 	g.yoff = y - 3
 	g.clampView()
+	if g.mobileUI != nil {
+		g.mobileUI.panX, g.mobileUI.panY = 0, 0
+	}
 }
 
 func (g *Game) centerOnNextBattle() {
@@ -1857,6 +1924,7 @@ func (g *Game) drawTitle(screen *ebiten.Image) {
 	ebitenutil.DebugPrintAt(screen, "POPULOUS", 8, 204)
 	ebitenutil.DebugPrintAt(screen, levelLine, 86, 204)
 	ebitenutil.DebugPrintAt(screen, "CODE "+input, 8, 216)
+	g.drawDemoHint(screen)
 	help := "UP/DOWN MENU  TYPE CODE  <-/-> WORLD"
 	if g.titleMessage != "" {
 		help = g.titleMessage

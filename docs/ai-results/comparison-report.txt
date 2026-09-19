@@ -1,0 +1,91 @@
+All: old win=325 loss=70 draw=0 ongoing=595; new win=452 loss=65 draw=1 ongoing=472
+Winning times: old min=106.5 median=767.375 max=1196.75; new min=114.625 median=803.625 max=1198.5
+Side 0: old win=175 loss=43 draw=0 ongoing=277; new win=218 loss=39 draw=1 ongoing=237
+Winning times: old min=106.5 median=777.75 max=1196.75; new min=114.625 median=820.25 max=1198.5
+  terrain=0 n=135: old win=61 loss=14 draw=0 ongoing=60; new win=70 loss=14 draw=0 ongoing=51
+  terrain=1 n=145: old win=54 loss=7 draw=0 ongoing=84; new win=72 loss=5 draw=1 ongoing=67
+  terrain=2 n=105: old win=20 loss=9 draw=0 ongoing=76; new win=23 loss=6 draw=0 ongoing=76
+  terrain=3 n=110: old win=40 loss=13 draw=0 ongoing=57; new win=53 loss=14 draw=0 ongoing=43
+  reaction=1-3 n=365: old win=120 loss=34 draw=0 ongoing=211; new win=142 loss=34 draw=1 ongoing=188
+  reaction=4-6 n=65: old win=28 loss=3 draw=0 ongoing=34; new win=41 loss=0 draw=0 ongoing=24
+  reaction=7-10 n=65: old win=27 loss=6 draw=0 ongoing=32; new win=35 loss=5 draw=0 ongoing=25
+  no_build=false n=485: old win=175 loss=42 draw=0 ongoing=268; new win=217 loss=38 draw=1 ongoing=229
+  no_build=true n=10: old win=0 loss=1 draw=0 ongoing=9; new win=1 loss=1 draw=0 ongoing=8
+  has_war=false n=105: old win=17 loss=12 draw=0 ongoing=76; new win=24 loss=12 draw=0 ongoing=69
+  has_war=true n=390: old win=158 loss=31 draw=0 ongoing=201; new win=194 loss=27 draw=1 ongoing=168
+  opponent_passive=false n=485: old win=170 loss=42 draw=0 ongoing=273; new win=214 loss=38 draw=1 ongoing=232
+  opponent_passive=true n=10: old win=5 loss=1 draw=0 ongoing=4; new win=4 loss=1 draw=0 ongoing=5
+  loss->loss: 23 worlds=48,51,54,159,164,165,171,265,266,267,268,322,325,351,365,366,433,454,455,456,457,458,459
+  loss->ongoing: 14 worlds=83,168,271,294,311,319,393,399,416,421,445,450,452,490
+  loss->win: 6 worlds=19,46,75,156,367,491
+  ongoing->loss: 10 worlds=49,136,140,143,247,274,291,423,451,453
+  ongoing->ongoing: 191 worlds=6,12,13,18,20,22,23,24,25,27,28,29,38,40,41,55,56,57,59,66,70,76,77,79,81,84,95,104,106,109,113,116,117,119,121,122,123,124,127,129,132,135,137,138,139,147,148,152,160,161,162,163,167,169,172,173,174,176,180,181,182,183,184,187,192,195,198,199,201,204,211,217,218,219,225,226,233,237,238,240,242,243,244,256,259,260,261,263,264,270,272,273,275,276,277,278,279,280,281,283,284,290,295,297,298,299,300,301,302,303,305,310,312,313,314,316,317,318,326,327,328,329,332,338,340,341,342,344,345,346,347,348,357,359,360,361,362,363,370,371,372,373,374,379,380,386,387,388,389,390,391,394,400,401,402,403,404,407,415,417,418,419,424,425,426,427,428,429,430,431,432,434,436,441,443,444,446,465,466,467,468,469,477,480,481,482,483,487,488,489,492
+  ongoing->win: 76 worlds=5,10,14,15,16,17,32,42,53,58,62,64,68,71,78,91,94,96,97,99,103,108,112,118,146,149,151,158,177,179,188,190,191,213,215,221,227,231,246,248,293,304,307,315,330,343,353,355,356,358,377,381,383,384,392,395,398,406,408,410,411,420,435,437,449,472,473,474,476,478,479,484,485,486,493,494
+  win->draw: 1 worlds=335
+  win->loss: 6 worlds=2,155,157,269,288,368
+  win->ongoing: 32 worlds=44,45,47,80,82,98,107,114,144,170,175,208,216,236,241,245,249,282,285,296,308,331,336,364,375,378,385,397,405,409,414,448
+  win->win: 136 worlds=0,1,3,4,7,8,9,11,21,26,30,31,33,34,35,36,37,39,43,50,52,60,61,63,65,67,69,72,73,74,85,86,87,88,89,90,92,93,100,101,102,105,110,111,115,120,125,126,128,130,131,133,134,141,142,145,150,153,154,166,178,185,186,189,193,194,196,197,200,202,203,205,206,207,209,210,212,214,220,222,223,224,228,229,230,232,234,235,239,250,251,252,253,254,255,257,258,262,286,287,289,292,306,309,320,321,323,324,333,334,337,339,349,350,352,354,369,376,382,396,412,413,422,438,439,440,442,447,460,461,462,463,464,470,471,475
+  gained world=5 ongoing -> win 1115.875s castles=9/8
+  gained world=10 ongoing -> win 482.500s castles=8/0
+  gained world=14 ongoing -> win 1142.500s castles=2/7
+  gained world=15 ongoing -> win 964.250s castles=4/6
+  gained world=16 ongoing -> win 688.500s castles=9/7
+  gained world=17 ongoing -> win 915.000s castles=9/4
+  gained world=19 loss -> win 894.875s castles=16/6
+  gained world=32 ongoing -> win 1013.000s castles=4/3
+  gained world=42 ongoing -> win 852.375s castles=5/8
+  gained world=46 loss -> win 995.875s castles=19/11
+  gained world=53 ongoing -> win 871.625s castles=9/7
+  gained world=58 ongoing -> win 872.625s castles=6/5
+  gained world=62 ongoing -> win 442.000s castles=4/11
+  gained world=64 ongoing -> win 1052.500s castles=10/13
+  gained world=68 ongoing -> win 610.875s castles=12/2
+  gained world=71 ongoing -> win 1020.875s castles=6/2
+  gained world=75 loss -> win 950.500s castles=4/18
+  gained world=78 ongoing -> win 807.125s castles=13/18
+  gained world=91 ongoing -> win 631.625s castles=2/2
+  gained world=94 ongoing -> win 670.750s castles=15/9
+Side 1: old win=150 loss=27 draw=0 ongoing=318; new win=234 loss=26 draw=0 ongoing=235
+Winning times: old min=198.75 median=741.5 max=1192.125; new min=252.0 median=777.0 max=1198.375
+  terrain=0 n=135: old win=51 loss=13 draw=0 ongoing=71; new win=66 loss=10 draw=0 ongoing=59
+  terrain=1 n=145: old win=49 loss=3 draw=0 ongoing=93; new win=83 loss=3 draw=0 ongoing=59
+  terrain=2 n=105: old win=10 loss=10 draw=0 ongoing=85; new win=24 loss=8 draw=0 ongoing=73
+  terrain=3 n=110: old win=40 loss=1 draw=0 ongoing=69; new win=61 loss=5 draw=0 ongoing=44
+  reaction=1-3 n=365: old win=122 loss=18 draw=0 ongoing=225; new win=174 loss=25 draw=0 ongoing=166
+  reaction=4-6 n=65: old win=9 loss=3 draw=0 ongoing=53; new win=32 loss=1 draw=0 ongoing=32
+  reaction=7-10 n=65: old win=19 loss=6 draw=0 ongoing=40; new win=28 loss=0 draw=0 ongoing=37
+  no_build=false n=485: old win=148 loss=27 draw=0 ongoing=310; new win=232 loss=26 draw=0 ongoing=227
+  no_build=true n=10: old win=2 loss=0 draw=0 ongoing=8; new win=2 loss=0 draw=0 ongoing=8
+  has_war=false n=275: old win=53 loss=9 draw=0 ongoing=213; new win=111 loss=5 draw=0 ongoing=159
+  has_war=true n=220: old win=97 loss=18 draw=0 ongoing=105; new win=123 loss=21 draw=0 ongoing=76
+  opponent_passive=false n=485: old win=145 loss=27 draw=0 ongoing=313; new win=228 loss=26 draw=0 ongoing=231
+  opponent_passive=true n=10: old win=5 loss=0 draw=0 ongoing=5; new win=6 loss=0 draw=0 ongoing=4
+  loss->loss: 10 worlds=110,173,175,176,177,178,179,203,323,334
+  loss->ongoing: 10 worlds=1,10,11,14,21,97,187,205,270,444
+  loss->win: 7 worlds=58,68,101,165,267,399,458
+  ongoing->loss: 11 worlds=74,107,129,131,156,201,206,207,266,341,373
+  ongoing->ongoing: 198 worlds=0,2,3,4,5,9,13,16,18,19,20,22,23,24,25,27,28,32,45,47,48,49,50,52,54,56,60,63,69,70,77,79,80,82,83,84,89,95,96,98,99,105,109,111,113,116,117,118,119,120,121,122,124,125,133,135,136,137,138,139,140,143,144,145,146,147,148,149,150,157,158,159,160,161,162,167,169,170,172,174,180,181,182,183,184,196,197,199,200,202,209,222,233,241,243,250,251,252,261,263,271,272,273,274,276,278,279,280,282,283,284,285,288,289,290,291,292,293,295,297,299,300,301,302,303,304,305,306,307,311,312,315,316,318,325,326,327,328,329,330,331,332,335,338,339,340,342,343,344,345,346,347,348,350,354,355,357,358,359,360,361,362,365,370,371,374,380,385,387,390,391,393,403,415,416,417,419,420,421,422,423,430,431,432,434,447,448,450,453,460,461,464,474,478,480,485,488,490
+  ongoing->win: 109 worlds=6,8,17,26,34,38,46,53,55,57,59,61,62,64,65,67,71,73,75,76,78,81,85,86,87,88,91,100,104,106,108,112,115,123,127,128,130,141,142,151,153,154,166,171,185,188,194,208,214,224,226,229,236,240,242,247,249,258,260,262,264,275,277,286,294,298,309,310,313,317,319,333,336,337,349,351,352,353,356,363,372,378,379,381,383,392,394,396,400,402,406,408,409,418,424,439,441,443,446,465,470,471,475,476,479,481,484,487,492
+  win->loss: 5 worlds=204,269,324,366,395
+  win->ongoing: 27 worlds=30,37,39,44,66,102,134,152,186,189,195,198,210,211,232,246,255,259,308,314,389,414,437,452,469,489,494
+  win->win: 118 worlds=7,12,15,29,31,33,35,36,40,41,42,43,51,72,90,92,93,94,103,114,126,132,155,163,164,168,190,191,192,193,212,213,215,216,217,218,219,220,221,223,225,227,228,230,231,234,235,237,238,239,244,245,248,253,254,256,257,265,268,281,287,296,320,321,322,364,367,368,369,375,376,377,382,384,386,388,397,398,401,404,405,407,410,411,412,413,425,426,427,428,429,433,435,436,438,440,442,445,449,451,454,455,456,457,459,462,463,466,467,468,472,473,477,482,483,486,491,493
+  gained world=6 ongoing -> win 746.625s castles=15/7
+  gained world=8 ongoing -> win 1137.000s castles=10/7
+  gained world=17 ongoing -> win 966.375s castles=7/3
+  gained world=26 ongoing -> win 557.250s castles=3/2
+  gained world=34 ongoing -> win 915.500s castles=4/9
+  gained world=38 ongoing -> win 929.625s castles=1/2
+  gained world=46 ongoing -> win 773.625s castles=7/5
+  gained world=53 ongoing -> win 1077.250s castles=19/8
+  gained world=55 ongoing -> win 807.625s castles=17/3
+  gained world=57 ongoing -> win 1001.000s castles=28/2
+  gained world=58 loss -> win 1004.875s castles=6/13
+  gained world=59 ongoing -> win 824.250s castles=21/4
+  gained world=61 ongoing -> win 643.250s castles=18/16
+  gained world=62 ongoing -> win 1080.250s castles=15/6
+  gained world=64 ongoing -> win 770.500s castles=16/9
+  gained world=65 ongoing -> win 1072.125s castles=12/27
+  gained world=67 ongoing -> win 1133.875s castles=29/10
+  gained world=68 loss -> win 902.750s castles=9/17
+  gained world=71 ongoing -> win 697.750s castles=24/6
+  gained world=73 ongoing -> win 961.250s castles=14/14

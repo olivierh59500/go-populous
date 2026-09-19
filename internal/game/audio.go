@@ -7,6 +7,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/audio"
 
 	"go-populous/internal/populous"
+	"go-populous/internal/recording"
 )
 
 const audioSampleRate = 44100
@@ -17,8 +18,9 @@ const effectVolume = 0.7
 const musicVolume = 0.35
 
 type activeSound struct {
-	player    *audio.Player
-	keepUntil time.Time
+	player     *audio.Player
+	keepUntil  time.Time
+	traceVoice uint64
 }
 
 type soundPlayer struct {
@@ -26,6 +28,7 @@ type soundPlayer struct {
 	sampleRate int
 	bank       *populous.SoundBank
 	pcm        map[int][]byte
+	trace      *recording.AudioTrace
 
 	mu       sync.Mutex
 	active   []activeSound
@@ -40,7 +43,7 @@ type soundPlayer struct {
 	heartbeatTempoNow           int
 }
 
-func newSoundPlayer(bank *populous.SoundBank) *soundPlayer {
+func newSoundPlayer(bank *populous.SoundBank, trace *recording.AudioTrace) *soundPlayer {
 	if bank == nil {
 		return nil
 	}
@@ -56,6 +59,7 @@ func newSoundPlayer(bank *populous.SoundBank) *soundPlayer {
 		sampleRate:     sampleRate,
 		bank:           bank,
 		pcm:            map[int][]byte{},
+		trace:          trace,
 		requests:       make(chan int, 32),
 		musicEnabled:   len(bank.Sequence) > 0 && len(bank.Measures) > 0,
 		effectsEnabled: true,
@@ -247,6 +251,7 @@ func (p *soundPlayer) playNowVolume(id int, volume float64) {
 	player := p.context.NewPlayerFromBytes(pcm)
 	player.SetBufferSize(30 * time.Millisecond)
 	player.SetVolume(volume)
+	traceVoice := p.trace.Play(id, volume)
 	player.Play()
 
 	p.mu.Lock()
@@ -257,11 +262,11 @@ func (p *soundPlayer) playNowVolume(id int, volume float64) {
 			kept = append(kept, active)
 			continue
 		}
-		_ = active.player.Close()
+		p.closeSound(active)
 	}
 	p.active = kept
 	if len(p.active) >= maxActiveSounds {
-		_ = p.active[0].player.Close()
+		p.closeSound(p.active[0])
 		copy(p.active, p.active[1:])
 		p.active = p.active[:len(p.active)-1]
 	}
@@ -269,7 +274,7 @@ func (p *soundPlayer) playNowVolume(id int, volume float64) {
 	if duration < minSoundLifetime {
 		duration = minSoundLifetime
 	}
-	p.active = append(p.active, activeSound{player: player, keepUntil: now.Add(duration + 500*time.Millisecond)})
+	p.active = append(p.active, activeSound{player: player, keepUntil: now.Add(duration + 500*time.Millisecond), traceVoice: traceVoice})
 	p.mu.Unlock()
 }
 
@@ -289,7 +294,12 @@ func (p *soundPlayer) Update() {
 			kept = append(kept, active)
 			continue
 		}
-		_ = active.player.Close()
+		p.closeSound(active)
 	}
 	p.active = kept
+}
+
+func (p *soundPlayer) closeSound(active activeSound) {
+	p.trace.Stop(active.traceVoice)
+	_ = active.player.Close()
 }

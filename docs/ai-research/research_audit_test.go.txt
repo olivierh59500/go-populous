@@ -1,0 +1,258 @@
+// Research harness: temporarily restore into internal/populous to reproduce.
+package populous
+
+import (
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"sync"
+	"testing"
+	"time"
+)
+
+type researchAuditResult struct {
+	Level             Level       `json:"level"`
+	Outcome           string      `json:"outcome"`
+	Ticks             int         `json:"ticks"`
+	Seconds           float64     `json:"seconds"`
+	Population        [2]int      `json:"population"`
+	LivingPopulation  [2]int      `json:"living_population"`
+	Mana              [2]int      `json:"mana"`
+	Castles           [2]int      `json:"castles"`
+	PeakCastles       [2]int      `json:"peak_castles"`
+	Towns             [2]int      `json:"towns"`
+	Actions           [2]int      `json:"actions"`
+	LivingSlots       [2]int      `json:"living_slots"`
+	DeadSlots         int         `json:"dead_slots"`
+	RuinSlots         int         `json:"ruin_slots"`
+	Slots             int         `json:"slots"`
+	War               bool        `json:"war"`
+	WarTick           int         `json:"war_tick"`
+	FirstOffenseTick  int         `json:"first_offense_tick"`
+	LastOffenseTick   int         `json:"last_offense_tick"`
+	OffensiveSounds   map[int]int `json:"offensive_sounds_both_sides"`
+	Modes             [2]int      `json:"modes"`
+	InitialPopulation [2]int      `json:"initial_population"`
+	InitialMana       [2]int      `json:"initial_mana"`
+	WallSeconds       float64     `json:"wall_seconds"`
+}
+
+func TestResearchCampaignAudit(t *testing.T) {
+	if os.Getenv("POPULOUS_RESEARCH_AUDIT") == "" {
+		t.Skip("research only")
+	}
+	f, err := os.Open("../../assets/amiga/level.dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels, err := LoadLevels(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rules [4]TerrainRules
+	for terrain := range rules {
+		data, err := os.ReadFile(fmt.Sprintf("../../assets/amiga/land%d", terrain))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rules[terrain], err = DecodeTerrainRules(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := "/private/tmp/populous-ai-research"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	jobs := make(chan Level)
+	completed := make(chan researchAuditResult)
+	var wg sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for level := range jobs {
+				started := time.Now()
+				w := GenerateWorldWithRules(level, rules[level.Terrain])
+				r := researchAuditResult{Level: level, OffensiveSounds: map[int]int{}, InitialPopulation: w.PlayerPopulations(), InitialMana: [2]int{w.Magnets[0].Mana, w.Magnets[1].Mana}}
+				for w.GameTurn < 9600 && campaignOutcome(w, GodPlayer) == "ongoing" {
+					w.TickWithAdvancedComputer(GodPlayer)
+					for player := range w.Computer {
+						if w.Computer[player].DoneTurn == w.GameTurn {
+							r.Actions[player]++
+						}
+						r.PeakCastles[player] = max(r.PeakCastles[player], w.Computer[player].NoCastles)
+					}
+					if w.War && r.WarTick == 0 {
+						r.WarTick = w.GameTurn
+					}
+					for _, sound := range w.DrainSoundEvents() {
+						if sound == TuneQuake || sound == TuneVolcano || sound == TuneFlood || sound == TuneKnighted || sound == TuneWar {
+							r.OffensiveSounds[sound]++
+							if r.FirstOffenseTick == 0 {
+								r.FirstOffenseTick = w.GameTurn
+							}
+							r.LastOffenseTick = w.GameTurn
+						}
+					}
+				}
+				r.Outcome = campaignOutcome(w, GodPlayer)
+				r.Ticks = w.GameTurn
+				r.Seconds = float64(w.GameTurn) / 8
+				r.Population = w.PlayerPopulations()
+				r.Slots = len(w.Peeps)
+				r.War = w.War
+				for player := range w.Computer {
+					r.Mana[player] = w.Magnets[player].Mana
+					r.Castles[player] = w.Computer[player].NoCastles
+					r.Towns[player] = w.Computer[player].NoTowns
+					r.Modes[player] = w.Magnets[player].Flags
+				}
+				for _, p := range w.Peeps {
+					if p.Population <= 0 {
+						r.DeadSlots++
+						continue
+					}
+					if p.Flags&InRuin != 0 {
+						r.RuinSlots++
+						continue
+					}
+					r.LivingSlots[p.Player]++
+					r.LivingPopulation[p.Player] += p.Population
+				}
+				r.WallSeconds = time.Since(started).Seconds()
+				completed <- r
+			}
+		}()
+	}
+	go func() {
+		for _, level := range levels {
+			jobs <- level
+		}
+		close(jobs)
+		wg.Wait()
+		close(completed)
+	}()
+	results := make([]researchAuditResult, 0, len(levels))
+	counts := map[string]int{}
+	stream, err := os.Create(filepath.Join(dir, "baseline.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	encoder := json.NewEncoder(stream)
+	for r := range completed {
+		results = append(results, r)
+		counts[r.Outcome]++
+		if err := encoder.Encode(r); err != nil {
+			t.Fatal(err)
+		}
+		if len(results)%10 == 0 || r.Outcome == "loss" {
+			t.Logf("completed=%d/%d counts=%v level=%d result=%s sec=%.1f pop=%v slots=%d dead=%d", len(results), len(levels), counts, r.Level.Number, r.Outcome, r.Seconds, r.LivingPopulation, r.Slots, r.DeadSlots)
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Level.Number < results[j].Level.Number })
+	data, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "baseline.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.Create(filepath.Join(dir, "baseline.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	csvw := csv.NewWriter(out)
+	csvw.Write([]string{"level", "code", "terrain", "game_mode", "player_powers", "enemy_powers", "speed", "outcome", "seconds", "blue_population", "red_population", "blue_mana", "red_mana", "blue_castles", "red_castles", "blue_peak_castles", "red_peak_castles", "blue_actions", "red_actions", "blue_alive_slots", "red_alive_slots", "dead_slots", "ruins", "slots", "war_tick", "first_offense_tick", "last_offense_tick"})
+	for _, r := range results {
+		row := []string{strconv.Itoa(r.Level.Number), r.Level.Code, strconv.Itoa(int(r.Level.Terrain)), strconv.Itoa(int(r.Level.GameMode)), strconv.Itoa(int(r.Level.PlayerPowers)), strconv.Itoa(int(r.Level.EnemyPowers)), strconv.Itoa(int(r.Level.EnemyReactionSpeed)), r.Outcome, strconv.FormatFloat(r.Seconds, 'f', 3, 64)}
+		for _, v := range []int{r.LivingPopulation[0], r.LivingPopulation[1], r.Mana[0], r.Mana[1], r.Castles[0], r.Castles[1], r.PeakCastles[0], r.PeakCastles[1], r.Actions[0], r.Actions[1], r.LivingSlots[0], r.LivingSlots[1], r.DeadSlots, r.RuinSlots, r.Slots, r.WarTick, r.FirstOffenseTick, r.LastOffenseTick} {
+			row = append(row, strconv.Itoa(v))
+		}
+		csvw.Write(row)
+	}
+	csvw.Flush()
+	if err := csvw.Error(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("FINAL worlds=%d counts=%v artifacts=%s", len(results), counts, dir)
+}
+
+func TestResearchWarSnapshots(t *testing.T) {
+	if os.Getenv("POPULOUS_RESEARCH_WAR") == "" {
+		t.Skip("research only")
+	}
+	f, err := os.Open("../../assets/amiga/level.dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels, err := LoadLevels(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, number := range []int{100, 102} {
+		level := levels[number]
+		data, err := os.ReadFile(fmt.Sprintf("../../assets/amiga/land%d", level.Terrain))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rules, err := DecodeTerrainRules(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := GenerateWorldWithRules(level, rules)
+		for w.GameTurn < 9600 && campaignOutcome(w, 0) == "ongoing" {
+			w.TickWithAdvancedComputer(0)
+			w.DrainSoundEvents()
+		}
+		data, err = json.MarshalIndent(struct {
+			Rules    TerrainRules
+			Snapshot WorldSnapshot
+		}{rules, w.Snapshot()}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fmt.Sprintf("/private/tmp/populous-ai-research/world-%d-tick9600.json", number), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		trace, err := os.Create(fmt.Sprintf("/private/tmp/populous-ai-research/world-%d-wartrace.jsonl", number))
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoder := json.NewEncoder(trace)
+		for tick := 0; tick < 512 && campaignOutcome(w, 0) == "ongoing"; tick++ {
+			type livingPeep struct {
+				Index       int
+				Peep        Peep
+				MapWhoAtPos byte
+				Block       byte
+				MapAlt      byte
+			}
+			live := []livingPeep{}
+			for i, p := range w.Peeps {
+				if p.Population > 0 && p.Flags&InRuin == 0 {
+					live = append(live, livingPeep{i, p, w.MapWho[p.AtPos], w.MapBlk[p.AtPos], w.MapAlt[p.AtPos]})
+				}
+			}
+			if err := encoder.Encode(struct {
+				Tick    int
+				Living  []livingPeep
+				Magnets [2]Magnet
+			}{w.GameTurn, live, w.Magnets}); err != nil {
+				t.Fatal(err)
+			}
+			w.TickWithAdvancedComputer(0)
+			w.DrainSoundEvents()
+		}
+		trace.Close()
+		t.Logf("level=%d after trace tick=%d result=%s pop=%v", number, w.GameTurn, campaignOutcome(w, 0), w.PlayerPopulations())
+	}
+}

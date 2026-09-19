@@ -1245,6 +1245,10 @@ func (w *World) Tick() {
 }
 
 func (w *World) TickWithComputer(computerControlled [2]bool) {
+	w.tickWithComputerStrategy(computerControlled, -1)
+}
+
+func (w *World) tickWithComputerStrategy(computerControlled [2]bool, advancedPlayer int) {
 	w.ComputerControlled = computerControlled
 	w.GameTurn++
 	if w.War {
@@ -1254,7 +1258,11 @@ func (w *World) TickWithComputer(computerControlled [2]bool) {
 		w.updateComputerStats()
 		for player, controlled := range w.ComputerControlled {
 			if controlled {
-				w.runComputerPlayer(player)
+				if player == advancedPlayer {
+					w.runAdvancedComputerPlayer(player)
+				} else {
+					w.runComputerPlayer(player)
+				}
 			}
 		}
 	}
@@ -1330,7 +1338,7 @@ func (w *World) TickWithComputer(computerControlled [2]bool) {
 				w.Peeps[i].BattlePopulation--
 			}
 		case w.Peeps[i].Flags == InTown:
-			w.processTown(i)
+			w.processTownWithLandAI(i, player != advancedPlayer)
 		case w.Peeps[i].Flags == OnMove:
 			if w.setFrame(i) {
 				if int(w.MapBlk[w.Peeps[i].AtPos]) == SwampBlock {
@@ -1342,7 +1350,7 @@ func (w *World) TickWithComputer(computerControlled [2]bool) {
 					}
 					continue
 				}
-				if w.ComputerControlled[player] {
+				if w.ComputerControlled[player] && player != advancedPlayer {
 					w.computerOneBlockFlat(w.Peeps[i].AtPos, player)
 				}
 				w.moveExplorer(i)
@@ -1676,6 +1684,10 @@ func (w *World) computerOneBlockFlat(pos, player int) bool {
 }
 
 func (w *World) processTown(index int) {
+	w.processTownWithLandAI(index, true)
+}
+
+func (w *World) processTownWithLandAI(index int, legacyLandAI bool) {
 	if index < 0 || index >= len(w.Peeps) || w.Peeps[index].Population <= 0 {
 		return
 	}
@@ -1709,7 +1721,7 @@ func (w *World) processTown(index int) {
 		w.MapWho[peep.AtPos] = byte(index + 1)
 	}
 
-	if w.ComputerControlled[player] && w.computerActionReady(player) {
+	if legacyLandAI && w.ComputerControlled[player] && w.computerActionReady(player) {
 		if int(w.MapAlt[peep.AtPos]) == 0 {
 			if !peep.LandComplete || oldFrame != peep.Frame || w.townHasFlatFootprint(peep.AtPos) {
 				peep.LandComplete = w.computerMakeLevel(peep.AtPos, player)
@@ -1747,12 +1759,27 @@ func (w *World) processTown(index int) {
 }
 
 func (w *World) spawnWalkerFromTown(index, life int) {
-	if index < 0 || index >= len(w.Peeps) || len(w.Peeps) >= MaxPeeps {
+	if index < 0 || index >= len(w.Peeps) {
 		return
 	}
 	town := &w.Peeps[index]
 	if life <= 0 || town.Population <= life {
 		return
+	}
+	// The original people table recycles its first dead slot. Reaching the
+	// table's high-water mark must not prevent surviving towns from emigrating.
+	newIndex := -1
+	for i := range w.Peeps {
+		if w.Peeps[i].Population <= 0 {
+			newIndex = i
+			break
+		}
+	}
+	if newIndex < 0 {
+		if len(w.Peeps) >= MaxPeeps {
+			return
+		}
+		newIndex = len(w.Peeps)
 	}
 	walkerPopulation := town.Population - (life >> 1)
 	town.Population = life >> 1
@@ -1768,13 +1795,26 @@ func (w *World) spawnWalkerFromTown(index, life int) {
 	if town.IQ < MaxMensa {
 		town.IQ++
 	}
-	w.Peeps = append(w.Peeps, walker)
-	newIndex := len(w.Peeps)
+	if newIndex == len(w.Peeps) {
+		w.Peeps = append(w.Peeps, walker)
+	} else {
+		// An expired ruin may still have a map reference; it must not start
+		// pointing at the newborn walker on another tile.
+		w.clearPeepMapRefs(newIndex)
+		for player := range w.Magnets {
+			if w.Magnets[player].Carried == newIndex+1 {
+				w.Magnets[player].Carried = 0
+			}
+		}
+		w.Peeps[newIndex] = walker
+	}
+	newIndex++ // MapWho and Carried use one-based IDs.
 	if w.MapWho[walker.AtPos] == 0 || w.MapWho[walker.AtPos] == byte(index+1) {
 		w.MapWho[walker.AtPos] = byte(newIndex)
 	}
-	if w.Magnets[int(town.Player)].Carried == index+1 {
-		w.Magnets[int(town.Player)].Carried = newIndex
+	// append may have moved Peeps, so use the copied walker after insertion.
+	if w.Magnets[int(walker.Player)].Carried == index+1 {
+		w.Magnets[int(walker.Player)].Carried = newIndex
 	}
 }
 
@@ -1926,7 +1966,9 @@ func (w *World) resolveContact(moverIndex, foundIndex int) bool {
 	}
 	if mover.Player == found.Player {
 		w.joinForces(moverIndex, foundIndex)
-		return false
+		// A knight cannot merge into a friendly town, but can cross it.
+		// Ordinary mergers consume the mover and still end its movement.
+		return w.Peeps[moverIndex].Population > 0
 	}
 
 	w.setBattle(moverIndex, foundIndex)
