@@ -1,0 +1,85 @@
+package populous
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+)
+
+func TestResearchEngineDeadSlotReuse(t *testing.T) {
+	for player := 0; player < 2; player++ {
+		w := &World{Peeps: make([]Peep, MaxPeeps, MaxPeeps)}
+		w.Peeps[0] = Peep{Flags: InTown, Player: byte(player), Population: 200, AtPos: 650, IQ: 1, Weapons: 1}
+		w.Magnets[player].Carried = 1
+		w.MapWho[650] = 1
+		w.spawnWalkerFromTown(0, 100)
+		if w.Peeps[1].Population != 150 || w.Peeps[0].Population != 50 || len(w.Peeps) != MaxPeeps || w.Magnets[player].Carried != 2 || w.MapWho[650] != 2 {
+			t.Errorf("player=%d dead slot not reused: town=%d walker=%d carrier=%d tile=%d", player, w.Peeps[0].Population, w.Peeps[1].Population, w.Magnets[player].Carried, w.MapWho[650])
+		}
+	}
+}
+
+func TestResearchEngineKnightPassesFriendlyTown(t *testing.T) {
+	for player := 0; player < 2; player++ {
+		w := &World{Peeps: []Peep{
+			{Flags: OnMove, Player: byte(player), Population: 1500, AtPos: 650, HeadFor: 3, Status: KnightStatus},
+			{Flags: InTown, Player: byte(player), Population: 100, AtPos: 650},
+			{Flags: InTown, Player: byte(player ^ 1), Population: 100, AtPos: 654},
+		}}
+		for i := range w.MapBlk { w.MapBlk[i] = FlatBlock }
+		w.MapWho[650], w.MapWho[654] = 2, 3
+		w.moveExplorer(0)
+		if w.Peeps[0].AtPos == 650 || w.Peeps[0].Population != 1500 || w.Peeps[1].Population != 100 {
+			t.Errorf("player=%d knight should pass friendly town without merging, got position=%d populations=%d/%d", player, w.Peeps[0].AtPos, w.Peeps[0].Population, w.Peeps[1].Population)
+		}
+	}
+}
+
+func TestResearchEngineCampaignPanel(t *testing.T) {
+	if os.Getenv("POPULOUS_ENGINE_PANEL") == "" { t.Skip("opt-in") }
+	f, err := os.Open("../../assets/amiga/level.dat")
+	if err != nil { t.Fatal(err) }
+	levels, err := LoadLevels(f)
+	f.Close()
+	if err != nil { t.Fatal(err) }
+	var rules [4]TerrainRules
+	for terrain := range rules {
+		data, err := os.ReadFile(fmt.Sprintf("../../assets/amiga/land%d", terrain))
+		if err != nil { t.Fatal(err) }
+		rules[terrain], err = DecodeTerrainRules(data)
+		if err != nil { t.Fatal(err) }
+	}
+	for _, number := range []int{0, 5, 25, 80, 100, 200, 250, 400, 450} {
+		t.Run(fmt.Sprint(number), func(t *testing.T) {
+			t.Parallel()
+			w := GenerateWorldWithRules(levels[number], rules[levels[number].Terrain])
+			warTick, peakCastles, firstCap := 0, 0, 0
+			for w.GameTurn < 9600 && campaignOutcome(w, 0) == "ongoing" {
+				w.TickWithAdvancedComputer(0)
+				w.DrainSoundEvents()
+				if w.War && warTick == 0 { warTick = w.GameTurn }
+				peakCastles = max(peakCastles, w.Computer[0].NoCastles)
+				if len(w.Peeps) == MaxPeeps && firstCap == 0 { firstCap = w.GameTurn }
+			}
+			dead := 0
+			for _, p := range w.Peeps { if p.Population <= 0 { dead++ } }
+			r := struct {
+				Level int `json:"level"`
+				Outcome string `json:"outcome"`
+				Seconds float64 `json:"seconds"`
+				Population [2]int `json:"population"`
+				Mana [2]int `json:"mana"`
+				Slots int `json:"slots"`
+				Dead int `json:"dead"`
+				WarTick int `json:"war_tick"`
+				PeakCastles int `json:"peak_castles"`
+				FirstCap int `json:"first_cap"`
+			}{number, campaignOutcome(w, 0), float64(w.GameTurn)/8, w.PlayerPopulations(), [2]int{w.Magnets[0].Mana,w.Magnets[1].Mana}, len(w.Peeps), dead, warTick, peakCastles, firstCap}
+			data, err := json.Marshal(r)
+			if err != nil { t.Fatal(err) }
+			t.Log(string(data))
+			if err := os.WriteFile(fmt.Sprintf("/private/tmp/populous-engine-audit.YvJITN/%s-result-%d.json", os.Getenv("POPULOUS_ENGINE_VARIANT"), number), data, 0644); err != nil { t.Fatal(err) }
+		})
+	}
+}

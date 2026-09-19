@@ -1,0 +1,452 @@
+package populous
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+var researchVariant int
+var researchPulse struct {
+	point, target, started int
+	pending                bool
+}
+
+func TestResearchGenerateOverlay(t *testing.T) {
+	if os.Getenv("POPULOUS_RESEARCH") == "" {
+		t.Skip()
+	}
+	worldSource := "world.go"
+	if path := os.Getenv("RESEARCH_ENGINE_SOURCE"); path != "" {
+		worldSource = path
+	}
+	b, err := os.ReadFile(worldSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.Replace(string(b), "w.runAdvancedComputerPlayer(player)", "w.researchRunComputer(player)", 1)
+	if s == string(b) {
+		t.Fatal("replacement missing")
+	}
+	dir := "/private/tmp/populous-strategy-lab"
+	if path := os.Getenv("RESEARCH_OUTPUT_DIR"); path != "" {
+		dir = path
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "world.go"), []byte(s), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source, _ := filepath.Abs("world.go")
+	ai, err := os.ReadFile("advanced_ai.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modifiedAI := strings.Replace(string(ai), "if w.Computer[player^1].Mode&(computerQuake|computerSwamp|computerKnight|computerVolcano|computerFlood|computerWar) == 0", "if researchVariant != 5 && w.Computer[player^1].Mode&(computerQuake|computerSwamp|computerKnight|computerVolcano|computerFlood|computerWar) == 0", 1)
+	if err := os.WriteFile(filepath.Join(dir, "advanced_ai.go"), []byte(modifiedAI), 0644); err != nil {
+		t.Fatal(err)
+	}
+	aiSource, _ := filepath.Abs("advanced_ai.go")
+	j, _ := json.Marshal(map[string]any{"Replace": map[string]string{source: filepath.Join(dir, "world.go"), aiSource: filepath.Join(dir, "advanced_ai.go")}})
+	if err := os.WriteFile(filepath.Join(dir, "overlay.json"), j, 0644); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.ReadFile("research_strategy_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "research_strategy_test.go"), self, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (w *World) researchRunComputer(player int) {
+	if researchVariant == 0 || researchVariant == 5 {
+		w.runAdvancedComputerPlayer(player)
+		return
+	}
+	if !w.computerActionReady(player) {
+		return
+	}
+	acted := false
+	mode := w.Computer[player].Mode
+	pop := w.PlayerPopulations()
+	if researchVariant == 6 {
+		acted = w.researchPulseCastle(player)
+		if !acted && !researchPulse.pending {
+			acted = w.advancedPower(player)
+		}
+		if !acted && w.Magnets[player].Flags != SettleMode {
+			acted = w.SetMagnetMode(player, SettleMode)
+		}
+		if !acted && !researchPulse.pending {
+			acted = w.advancedLand(player)
+		}
+		if acted {
+			w.markComputerAction(player)
+		}
+		return
+	}
+	if researchVariant == 4 {
+		acted = w.researchFrontierLand(player)
+		if !acted {
+			acted = w.advancedPower(player)
+		}
+		if !acted {
+			acted = w.researchMilitaryPolicy(player)
+		}
+		if !acted {
+			acted = w.advancedLand(player)
+		}
+		if acted {
+			w.markComputerAction(player)
+		}
+		return
+	}
+	if researchVariant == 3 {
+		acted = w.advancedPower(player)
+		if !acted && w.Magnets[player].Flags != SettleMode {
+			acted = w.SetMagnetMode(player, SettleMode)
+		}
+		if !acted && w.Computer[player].NoTowns+w.Computer[player].NoCastles < 10 && w.GameTurn < 5*60*8 {
+			acted = w.researchVillageLand(player)
+		} else if !acted {
+			acted = w.advancedLand(player)
+		}
+		if acted {
+			w.markComputerAction(player)
+		}
+		return
+	}
+	if mode&computerWar != 0 {
+		// Economy until a population lead, then buy an ordinary Armageddon.
+		ratio := 15
+		if researchVariant == 2 {
+			ratio = 12
+		}
+		if w.Magnets[player].Mana >= ManaWarCost && pop[player]*10 > pop[player^1]*ratio {
+			acted = w.WarPower(player)
+		}
+		if !acted && w.Magnets[player].Flags != SettleMode {
+			acted = w.SetMagnetMode(player, SettleMode)
+		}
+		if !acted {
+			acted = w.advancedLand(player)
+		}
+	} else {
+		acted = w.advancedPower(player)
+		if !acted && w.Magnets[player].Flags != SettleMode {
+			acted = w.SetMagnetMode(player, SettleMode)
+		}
+		if !acted {
+			acted = w.advancedLand(player)
+		}
+	}
+	if acted {
+		w.markComputerAction(player)
+	}
+}
+
+func (w *World) researchPulseCastle(player int) bool {
+	if researchPulse.pending {
+		if w.GameTurn <= researchPulse.started+8 {
+			return false
+		}
+		point := researchPulse.point
+		if w.Alt[point] == researchPulse.target {
+			researchPulse.pending = false
+			return false
+		}
+		if !w.HasBuildPresence(player, point%EndWidth-3, point/EndWidth-3, 8, 8) {
+			researchPulse.pending = false
+			return false
+		}
+		trial := *w
+		raise := w.Alt[point] < researchPulse.target
+		if !trial.changeAltitude(player, point%EndWidth, point/EndWidth, raise, false) || trial.Magnets[player].Mana < 0 {
+			return false
+		}
+		ok := w.changeAltitude(player, point%EndWidth, point/EndWidth, raise, false)
+		if w.Alt[point] == researchPulse.target {
+			researchPulse.pending = false
+		}
+		return ok
+	}
+	if w.Level.GameMode&(GameNoBuild|GameOnlyRaise) != 0 || w.Magnets[player].Mana < 200 || w.GameTurn > 8*60*10 {
+		return false
+	}
+	for _, p := range w.Peeps {
+		if p.Population < 500 || int(p.Player) != player || p.Flags != InTown || w.checkLife(player, p.AtPos) < CityFood {
+			continue
+		}
+		x, y := p.AtPos%MapWidth, p.AtPos/MapWidth
+		free := 0
+		for yy := max(0, y-6); yy <= min(MapHeight-1, y+6); yy++ {
+			for xx := max(0, x-6); xx <= min(MapWidth-1, x+6); xx++ {
+				pos := xx + yy*MapWidth
+				if w.MapBlk[pos] == FlatBlock && w.MapWho[pos] == 0 {
+					free++
+				}
+			}
+		}
+		if free < 15 {
+			continue
+		}
+		for _, offset := range offsetVector[9:17] {
+			if w.validMove(p.AtPos, offset) == 1 {
+				continue
+			}
+			pos := p.AtPos + offset
+			for _, corner := range [...]int{0, 1, EndWidth, EndWidth + 1} {
+				point := pos%MapWidth + pos/MapWidth*EndWidth + corner
+				xx, yy := point%EndWidth, point/EndWidth
+				if !w.HasBuildPresence(player, xx-3, yy-3, 8, 8) {
+					continue
+				}
+				for _, raise := range []bool{false, true} {
+					trial := *w
+					if !trial.changeAltitude(player, xx, yy, raise, false) || w.Magnets[player].Mana-trial.Magnets[player].Mana > 40 {
+						continue
+					}
+					life := trial.checkLife(player, p.AtPos)
+					if life < 100 || life >= CityFood || life >= p.Population {
+						continue
+					}
+					bad := false
+					for _, other := range w.Peeps {
+						if other.Player == p.Player && other.Population > 0 && other.Flags == InTown && other.AtPos != p.AtPos && trial.checkLife(player, other.AtPos) < w.checkLife(player, other.AtPos) {
+							bad = true
+							break
+						}
+					}
+					if bad {
+						continue
+					}
+					if !trial.changeAltitude(player, xx, yy, !raise, false) || trial.Alt[point] != w.Alt[point] || trial.Magnets[player].Mana < 0 {
+						continue
+					}
+					researchPulse.point, researchPulse.target, researchPulse.started, researchPulse.pending = point, w.Alt[point], w.GameTurn, true
+					return w.changeAltitude(player, xx, yy, raise, false)
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (w *World) researchMilitaryPolicy(player int) bool {
+	pop := w.PlayerPopulations()
+	carried := w.carriedPeepIndex(player)
+	mode := SettleMode
+	if w.Computer[player].NoCastles >= 3 && carried >= 0 && pop[player] > 2500 {
+		p := w.Peeps[carried]
+		if w.Computer[player].Mode&computerKnight != 0 && w.Magnets[player].Mana >= ManaKnightCost+200 {
+			if p.Population >= 1000 {
+				return w.Knight(player)
+			}
+			mode = MagnetMode
+			if w.Magnets[player].Flags != mode || w.Magnets[player].GoTo != p.AtPos {
+				return w.SetMagnetTo(player, p.AtPos)
+			}
+		} else if p.Population >= 1500 && pop[player] > pop[player^1]*3/2 {
+			enemy := w.closestEnemy(carried)
+			if enemy >= 0 {
+				mode = MagnetMode
+				target := w.Peeps[enemy].AtPos
+				if w.Magnets[player].Flags != mode || w.Magnets[player].GoTo != target {
+					return w.SetMagnetTo(player, target)
+				}
+			}
+		}
+	}
+	if w.Magnets[player].Flags != mode {
+		return w.SetMagnetMode(player, mode)
+	}
+	return false
+}
+
+func (w *World) researchFrontierLand(player int) bool {
+	if w.Computer[player].Mode&computerLand == 0 || w.Level.GameMode&GameNoBuild != 0 || w.Magnets[player].Mana < 100 {
+		return false
+	}
+	bestScore, bestX, bestY, bestRaise := 0, 0, 0, false
+	consider := func(x, y int, raise bool, base int) {
+		if x < 0 || x > MapWidth || y < 0 || y > MapHeight || !w.HasBuildPresence(player, x-3, y-3, 8, 8) {
+			return
+		}
+		trial := *w
+		if !trial.changeAltitude(player, x, y, raise, false) || trial.Magnets[player].Mana < 0 || w.advancedDamagesTown(&trial, player) {
+			return
+		}
+		score := base - (w.Magnets[player].Mana - trial.Magnets[player].Mana)
+		for _, p := range w.Peeps {
+			if p.Population <= 0 || p.Flags&InRuin != 0 || !inMap(p.AtPos) {
+				continue
+			}
+			if int(p.Player) == player {
+				if trial.MapBlk[p.AtPos] == WaterBlock && w.MapBlk[p.AtPos] != WaterBlock {
+					return
+				}
+			} else {
+				if trial.MapBlk[p.AtPos] == WaterBlock && w.MapBlk[p.AtPos] != WaterBlock {
+					score += p.Population*2 + 1000
+				}
+				if p.Flags == InTown {
+					score += max(0, w.checkLife(player^1, p.AtPos)-trial.checkLife(player^1, p.AtPos))
+				}
+			}
+		}
+		if score > bestScore {
+			bestScore, bestX, bestY, bestRaise = score, x, y, raise
+		}
+	}
+	for i, p := range w.Peeps {
+		if p.Population <= 0 || p.Flags&InRuin != 0 || !inMap(p.AtPos) {
+			continue
+		}
+		x, y := p.AtPos%MapWidth, p.AtPos/MapWidth
+		if int(p.Player) != player && p.Flags&InWater == 0 {
+			for _, d := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
+				consider(x+d[0], y+d[1], false, 0)
+			}
+		} else if int(p.Player) == player && (isHeadedPeep(p) || (w.Magnets[player].Flags == MagnetMode && w.Magnets[player].Carried == i+1)) {
+			target := w.closestEnemy(i)
+			if target < 0 {
+				continue
+			}
+			nx, ny := x+sign(w.Peeps[target].AtPos%MapWidth-x), y+sign(w.Peeps[target].AtPos/MapWidth-y)
+			next := nx + ny*MapWidth
+			if inMap(next) && w.MapBlk[next] == WaterBlock {
+				for _, d := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
+					consider(nx+d[0], ny+d[1], true, 500)
+				}
+			}
+		}
+	}
+	if bestScore > 0 {
+		return w.changeAltitude(player, bestX, bestY, bestRaise, false)
+	}
+	return false
+}
+
+func (w *World) researchVillageLand(player int) bool {
+	if w.Level.GameMode&GameNoBuild != 0 || w.Computer[player].Mode&computerLand == 0 {
+		return false
+	}
+	bestScore, bestX, bestY, bestRaise := 0, 0, 0, false
+	for _, p := range w.Peeps {
+		if p.Population <= 0 || int(p.Player) != player || !inMap(p.AtPos) || (p.Flags != InTown && p.Flags != OnMove) || isHeadedPeep(p) {
+			continue
+		}
+		x, y := p.AtPos%MapWidth, p.AtPos/MapWidth
+		oldLife := w.checkLife(player, p.AtPos)
+		if p.Flags == InTown && oldLife >= 185 {
+			continue
+		}
+		alt := w.Alt[x+y*EndWidth]
+		if alt < 1 {
+			alt = 1
+		}
+		for _, offset := range offsetVector[:9] {
+			if w.validMove(p.AtPos, offset) == 1 {
+				continue
+			}
+			pos := p.AtPos + offset
+			for _, corner := range [...]int{0, 1, EndWidth, EndWidth + 1} {
+				point := pos%MapWidth + pos/MapWidth*EndWidth + corner
+				if w.Alt[point] == alt {
+					continue
+				}
+				xx, yy := point%EndWidth, point/EndWidth
+				if !w.HasBuildPresence(player, xx-4, yy-4, 9, 9) {
+					continue
+				}
+				raise := w.Alt[point] < alt
+				trial := *w
+				if !trial.changeAltitude(player, xx, yy, raise, false) || trial.Magnets[player].Mana < 0 || w.advancedDamagesTown(&trial, player) {
+					continue
+				}
+				life := trial.checkLife(player, p.AtPos)
+				if life < oldLife || life >= CityFood {
+					continue
+				}
+				score := 8 + (life-oldLife)*10 - (w.Magnets[player].Mana-trial.Magnets[player].Mana)/4 - abs(xx-x) - abs(yy-y)
+				if oldLife <= 0 && life > 0 {
+					score += 500
+				}
+				if score > bestScore {
+					bestScore, bestX, bestY, bestRaise = score, xx, yy, raise
+				}
+			}
+		}
+	}
+	if bestScore > 0 {
+		return w.changeAltitude(player, bestX, bestY, bestRaise, false)
+	}
+	return false
+}
+
+func TestResearchCandidates(t *testing.T) {
+	if os.Getenv("POPULOUS_RESEARCH") == "" {
+		t.Skip()
+	}
+	f, err := os.Open("../../assets/amiga/level.dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	levels, err := LoadLevels(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rules [4]TerrainRules
+	for i := range rules {
+		b, e := os.ReadFile(fmt.Sprintf("../../assets/amiga/land%d", i))
+		if e != nil {
+			t.Fatal(e)
+		}
+		rules[i], e = DecodeTerrainRules(b)
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	variants := []int{0, 1, 2}
+	if env := os.Getenv("RESEARCH_VARIANT"); env != "" {
+		variants = nil
+		for _, part := range strings.Split(env, ",") {
+			v, _ := strconv.Atoi(part)
+			variants = append(variants, v)
+		}
+	}
+	numbers := []int{0, 5, 25, 80, 100, 200, 250, 400, 450}
+	if env := os.Getenv("RESEARCH_LEVELS"); env != "" {
+		numbers = nil
+		for _, part := range strings.Split(env, ",") {
+			n, _ := strconv.Atoi(part)
+			numbers = append(numbers, n)
+		}
+	}
+	for _, variant := range variants {
+		researchVariant = variant
+		for _, number := range numbers {
+			researchPulse.pending = false
+			level := levels[number]
+			w := GenerateWorldWithRules(level, rules[level.Terrain])
+			peakCastles, warTurn := 0, 0
+			for tick := 0; tick < 20*60*8 && campaignOutcome(w, 0) == "ongoing"; tick++ {
+				w.TickWithAdvancedComputer(0)
+				w.DrainSoundEvents()
+				peakCastles = max(peakCastles, w.Computer[0].NoCastles)
+				if w.War && warTurn == 0 {
+					warTurn = w.GameTurn
+				}
+			}
+			t.Logf("variant=%d level=%d powers=%02x/%02x result=%s seconds=%.3f population=%v castles=%d/%d peakCastles=%d mana=%d/%d warSeconds=%.3f slots=%d", variant, number, level.PlayerPowers, level.EnemyPowers, campaignOutcome(w, 0), float64(w.GameTurn)/8, w.PlayerPopulations(), w.Computer[0].NoCastles, w.Computer[1].NoCastles, peakCastles, w.Magnets[0].Mana, w.Magnets[1].Mana, float64(warTurn)/8, len(w.Peeps))
+		}
+	}
+}

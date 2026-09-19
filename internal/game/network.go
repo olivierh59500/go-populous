@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	networkCompatibilityID = "go-populous-lockstep-1"
+	// Recycled people and friendly-town traversal change shared simulation
+	// results even though the packet and snapshot layouts stay compatible.
+	networkCompatibilityID = "go-populous-lockstep-2"
 	networkHashInterval    = 32
 	networkHashHistory     = 128
 	networkCatchUpTicks    = 4
@@ -628,13 +630,18 @@ func (network *networkGame) displayStatus() string {
 	return network.status
 }
 
-// Close releases a pending listener/dial or the active peer. It is safe to
+// Close releases a pending recording, listener/dial or the active peer. It is safe to
 // call after Ebiten exits even when setup never completed.
 func (g *Game) Close() error {
-	if g == nil || g.network == nil {
+	if g == nil {
 		return nil
 	}
-	return g.network.close()
+	recordingErr := g.closeDemoRecording()
+	recordingErr = errors.Join(recordingErr, g.audioTrace.Close())
+	if g.network == nil {
+		return recordingErr
+	}
+	return errors.Join(recordingErr, g.network.close())
 }
 
 func (network *networkGame) close() error {

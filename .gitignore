@@ -40,6 +40,14 @@ android/app/build/
 android/app/libs/*.aar
 android/app/libs/*-sources.jar
 android/local.properties
+android/keystore/
+/dist/android/
+
+# Generated demo movies and export scratch files
+/recordings/
+
+# Per-device mobile controls and display preferences
+/go-populous-ui.json
 
 # Editor/IDE
 # .idea/

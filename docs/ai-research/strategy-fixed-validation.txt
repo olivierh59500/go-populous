@@ -1,0 +1,34 @@
+=== RUN   TestResearchCandidates
+    research_strategy_test.go:449: variant=0 level=10 powers=3f/0b result=ongoing seconds=1200.000 population=[10350 2848] castles=9/0 peakCastles=9 mana=1049/2638 warSeconds=0.000 slots=59
+    research_strategy_test.go:449: variant=0 level=35 powers=3f/03 result=win seconds=830.250 population=[29560 0] castles=0/0 peakCastles=18 mana=4963/-250 warSeconds=797.125 slots=80
+    research_strategy_test.go:449: variant=0 level=70 powers=2d/24 result=ongoing seconds=1200.000 population=[50867 12641] castles=3/8 peakCastles=3 mana=14248/19109 warSeconds=0.000 slots=125
+    research_strategy_test.go:449: variant=0 level=130 powers=3e/0d result=win seconds=544.500 population=[29910 0] castles=0/0 peakCastles=13 mana=4957/-250 warSeconds=504.125 slots=99
+    research_strategy_test.go:449: variant=0 level=160 powers=1e/0f result=ongoing seconds=1200.000 population=[26632 178] castles=0/0 peakCastles=0 mana=5376/437 warSeconds=0.000 slots=71
+    research_strategy_test.go:449: variant=0 level=220 powers=3b/38 result=win seconds=863.500 population=[800 0] castles=0/0 peakCastles=10 mana=4343/1845 warSeconds=818.125 slots=184
+    research_strategy_test.go:449: variant=0 level=300 powers=09/08 result=ongoing seconds=1200.000 population=[16247 7265] castles=0/0 peakCastles=0 mana=844/3299 warSeconds=0.000 slots=55
+    research_strategy_test.go:449: variant=0 level=350 powers=3e/14 result=win seconds=797.250 population=[50643 0] castles=0/0 peakCastles=6 mana=1289/-128 warSeconds=796.125 slots=89
+    research_strategy_test.go:449: variant=0 level=475 powers=08/3f result=win seconds=620.250 population=[66846 0] castles=8/0 peakCastles=8 mana=17286/-250 warSeconds=0.000 slots=142
+    research_strategy_test.go:449: variant=0 level=490 powers=37/3f result=ongoing seconds=1200.000 population=[108258 55958] castles=18/9 peakCastles=19 mana=37666/5549 warSeconds=0.000 slots=197
+    research_strategy_test.go:449: variant=3 level=10 powers=3f/0b result=loss seconds=881.000 population=[0 40252] castles=0/12 peakCastles=3 mana=-250/1946 warSeconds=0.000 slots=51
+    research_strategy_test.go:449: variant=3 level=35 powers=3f/03 result=win seconds=982.375 population=[50550 0] castles=0/0 peakCastles=19 mana=5991/52960 warSeconds=965.125 slots=113
+    research_strategy_test.go:449: variant=3 level=70 powers=2d/24 result=ongoing seconds=1200.000 population=[62655 11460] castles=2/1 peakCastles=2 mana=2396/26987 warSeconds=0.000 slots=121
+    research_strategy_test.go:449: variant=3 level=130 powers=3e/0d result=win seconds=627.000 population=[32687 0] castles=0/0 peakCastles=14 mana=6515/2317 warSeconds=595.125 slots=153
+    research_strategy_test.go:449: variant=3 level=160 powers=1e/0f result=ongoing seconds=1200.000 population=[3655 13388] castles=0/0 peakCastles=0 mana=151/6089 warSeconds=0.000 slots=71
+    research_strategy_test.go:449: variant=3 level=220 powers=3b/38 result=win seconds=993.750 population=[107918 0] castles=0/0 peakCastles=11 mana=1179/7035 warSeconds=973.125 slots=208
+    research_strategy_test.go:449: variant=3 level=300 powers=09/08 result=ongoing seconds=1200.000 population=[17192 11575] castles=0/0 peakCastles=0 mana=2599/4849 warSeconds=0.000 slots=62
+    research_strategy_test.go:449: variant=3 level=350 powers=3e/14 result=win seconds=528.500 population=[38523 0] castles=7/0 peakCastles=11 mana=62004/2588 warSeconds=0.000 slots=130
+    research_strategy_test.go:449: variant=3 level=475 powers=08/3f result=win seconds=823.250 population=[90820 0] castles=19/0 peakCastles=19 mana=34734/-223 warSeconds=0.000 slots=122
+    research_strategy_test.go:449: variant=3 level=490 powers=37/3f result=ongoing seconds=1200.000 population=[10013 174046] castles=5/48 peakCastles=16 mana=134/3098 warSeconds=0.000 slots=178
+    research_strategy_test.go:449: variant=4 level=10 powers=3f/0b result=win seconds=651.375 population=[12295 0] castles=3/0 peakCastles=4 mana=6965/3969 warSeconds=0.000 slots=37
+    research_strategy_test.go:449: variant=4 level=35 powers=3f/03 result=win seconds=710.500 population=[63918 0] castles=0/0 peakCastles=14 mana=1259/2798 warSeconds=704.125 slots=115
+    research_strategy_test.go:449: variant=4 level=70 powers=2d/24 result=ongoing seconds=1200.000 population=[62168 8227] castles=1/0 peakCastles=1 mana=1688/3210 warSeconds=0.000 slots=126
+    research_strategy_test.go:449: variant=4 level=130 powers=3e/0d result=win seconds=574.625 population=[47501 0] castles=0/0 peakCastles=13 mana=4556/-250 warSeconds=548.125 slots=117
+    research_strategy_test.go:449: variant=4 level=160 powers=1e/0f result=ongoing seconds=1200.000 population=[3655 13388] castles=0/0 peakCastles=0 mana=151/6089 warSeconds=0.000 slots=71
+    research_strategy_test.go:449: variant=4 level=220 powers=3b/38 result=win seconds=945.625 population=[52467 0] castles=4/0 peakCastles=5 mana=27276/-250 warSeconds=0.000 slots=205
+    research_strategy_test.go:449: variant=4 level=300 powers=09/08 result=ongoing seconds=1200.000 population=[17192 11575] castles=0/0 peakCastles=0 mana=2599/4849 warSeconds=0.000 slots=62
+    research_strategy_test.go:449: variant=4 level=350 powers=3e/14 result=win seconds=473.625 population=[33699 0] castles=6/0 peakCastles=8 mana=65191/2022 warSeconds=0.000 slots=132
+    research_strategy_test.go:449: variant=4 level=475 powers=08/3f result=win seconds=354.500 population=[39532 0] castles=18/0 peakCastles=20 mana=14623/-250 warSeconds=0.000 slots=119
+    research_strategy_test.go:449: variant=4 level=490 powers=37/3f result=ongoing seconds=1200.000 population=[30832 13866] castles=0/0 peakCastles=25 mana=8378/-9 warSeconds=1107.625 slots=208
+--- PASS: TestResearchCandidates (51.08s)
+PASS
+ok  	go-populous/internal/populous	51.274s
