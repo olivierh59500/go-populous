@@ -180,6 +180,23 @@ resume after a lasting interruption. Permissions, pairing, privacy notes and
 the mandatory two-device test plan are in the
 [Android Bluetooth guide](docs/ANDROID_BLUETOOTH.md).
 
+### Windows
+
+The macOS/Linux release pipeline produces three standalone Windows GUI
+executables from the same source: x86 (32-bit), x64, and ARM64. They include
+the game data, application icon, manifest, and version information; no Windows
+SDK or external DLL is required to build or run them. Generate the current
+files and their SHA-256 checksums with:
+
+```sh
+./scripts/build-windows-release.sh
+```
+
+The resulting executables are under `dist/windows/` and are explicitly included
+in Git. They are portable and unsigned, so Windows SmartScreen can warn on first
+launch. See the [Windows release instructions](docs/WINDOWS_RELEASE.md) for
+target details, integrity checks, limitations, and the real-Windows test plan.
+
 ### Multiplayer
 
 Start the host (good side) and choose the world index:

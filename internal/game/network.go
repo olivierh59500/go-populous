@@ -3,6 +3,7 @@ package game
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -25,6 +26,13 @@ const (
 	networkPingTimeout     = 15 * time.Second
 	networkProgressTimeout = 5 * time.Second
 )
+
+// networkReleaseFingerprint is set by release builds with -ldflags -X. It is
+// a content fingerprint of the platform-independent engine inputs, so all
+// architectures of one release use the same multiplayer identity even when
+// the build worktree is dirty. Keeping networkCompatibilityID as a separate
+// prefix still forces an explicit break for semantic lockstep changes.
+var networkReleaseFingerprint string
 
 type networkRole uint8
 
@@ -168,13 +176,21 @@ func (g *Game) StartMultiplayer(config NetworkConfig) error {
 }
 
 // currentNetworkBuildID rejects normal builds from different revisions while
-// keeping cross-platform binaries from the same revision compatible. The
-// explicit compatibility prefix must be bumped whenever uncommitted protocol
-// or simulation changes are distributed intentionally.
+// keeping cross-platform binaries from the same revision compatible. Release
+// builds inject a content fingerprint because Go's VCS metadata only records
+// that a tree is dirty, not which changes it contains. The explicit
+// compatibility prefix must still be bumped for semantic lockstep changes.
 func currentNetworkBuildID() string {
-	id := networkCompatibilityID
 	info, ok := debug.ReadBuildInfo()
-	if !ok {
+	return networkBuildID(networkReleaseFingerprint, info, ok)
+}
+
+func networkBuildID(releaseFingerprint string, info *debug.BuildInfo, hasBuildInfo bool) string {
+	id := networkCompatibilityID
+	if fingerprint := normalizedNetworkReleaseFingerprint(releaseFingerprint); fingerprint != "" {
+		return id + "-" + fingerprint
+	}
+	if !hasBuildInfo || info == nil {
 		return id
 	}
 	if info.Main.Version != "" && info.Main.Version != "(devel)" {
@@ -203,6 +219,28 @@ func currentNetworkBuildID() string {
 		id = id[:128]
 	}
 	return id
+}
+
+func normalizedNetworkReleaseFingerprint(fingerprint string) string {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		return ""
+	}
+	maxLength := 128 - len(networkCompatibilityID) - 1
+	valid := len(fingerprint) <= maxLength
+	for i := 0; valid && i < len(fingerprint); i++ {
+		character := fingerprint[i]
+		valid = character >= 'a' && character <= 'z' ||
+			character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' ||
+			character == '.' || character == '_' || character == '-'
+	}
+	if valid {
+		return fingerprint
+	}
+	// A malformed linker value must not make the handshake invalid or collapse
+	// distinct source states onto one common fallback identity.
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fingerprint)))
 }
 
 func newNetworkSessionID() uint64 {

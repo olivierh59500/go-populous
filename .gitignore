@@ -45,6 +45,13 @@ android/keystore/
 !/dist/android/SHA256SUMS
 !/dist/android/populous-android-1.1.0-arm64.apk
 
+# Current portable Windows release (all other generated releases stay local)
+/dist/windows/*
+!/dist/windows/SHA256SUMS
+!/dist/windows/populous-windows-x86-1.1.0.exe
+!/dist/windows/populous-windows-x64-1.1.0.exe
+!/dist/windows/populous-windows-arm64-1.1.0.exe
+
 # Generated demo movies and export scratch files
 /recordings/
 
@@ -58,3 +65,4 @@ android/keystore/
 .gitignore
 docs/*
 !docs/ANDROID_BLUETOOTH.md
+!docs/WINDOWS_RELEASE.md

@@ -31,8 +31,9 @@ régénèrent `android/app/libs/populous.aar`. La configuration release applique
 ressources inutilisées. Les noms et callbacks Java utilisés par Go/JNI sont
 préservés. Seule l'architecture `arm64-v8a` est incluse.
 
-La version actuelle est `1.1.0`, code `3`, définie dans
-`android/app/build.gradle`. Incrémenter le code à chaque version distribuée.
+La version actuelle est `1.1.0`, code Android `3`. Le nom de version commun est
+défini dans `VERSION`; incrémenter aussi le code dans `android/app/build.gradle`
+à chaque version Android distribuée.
 
 Les fichiers de publication sont générés dans `dist/android/`. L'APK courant et
 `SHA256SUMS` sont explicitement inclus dans Git ; les clés, certificats de
