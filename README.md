@@ -1,25 +1,30 @@
 # Go Populous
 
-A fan-made remake of Bullfrog's 1989 god-game classic [Populous](https://fr.wikipedia.org/wiki/Populous_%28jeu_vid%C3%A9o%29), written in Go with [Ebitengine](https://ebitengine.org/).
+A fan-made remake of Bullfrog's 1989 god-game classic [Populous](https://en.wikipedia.org/wiki/Populous), written in Go with [Ebitengine](https://ebitengine.org/).
 
-The project recreates the original isometric world view, terrain sculpting, population growth, opposing deity, mana-driven powers, conquest-style worlds, Amiga-inspired graphics, and sound playback from decoded game data.
+Shape the land, help your followers build settlements, gather mana, and challenge
+the opposing deity across the original campaign worlds. The game recreates the
+isometric terrain, population growth, battles, divine powers, Amiga graphics,
+and sound playback from decoded game data on desktop and Android.
 
-## Media
+## Screenshots
 
-### Gameplay Video
+Click an image to open the full-size capture.
 
-<video controls width="960" src="screenshots/Populous%20remake%20go.webm">
-  <a href="screenshots/Populous%20remake%20go.webm">Watch the gameplay video</a>
-</video>
+| Coastal settlement | Village development | Mountain terrain |
+| --- | --- | --- |
+| [![A coastal settlement with the classic isometric view, minimap, and icon panel](docs/media/screenshot-1.png)](docs/media/screenshot-1.png) | [![An expanded village after leveling land for new settlements](docs/media/screenshot-2.png)](docs/media/screenshot-2.png) | [![Mountain terrain and wooded hills around growing settlements](docs/media/screenshot-3.png)](docs/media/screenshot-3.png) |
 
-[Watch the gameplay video](screenshots/Populous%20remake%20go.webm)
+## Gameplay video
 
-### Screenshots
+[![Animated preview of terrain sculpting and settlement growth in Go Populous](docs/media/preview.gif)](https://github.com/olivierh59500/go-populous/raw/refs/heads/main/docs/media/preview.mp4)
 
-| | |
-| --- | --- |
-| ![Go Populous screenshot 1](screenshots/screen1.png) | ![Go Populous screenshot 2](screenshots/screen2.png) |
-| ![Go Populous screenshot 3](screenshots/screen3.png) | ![Go Populous screenshot 4](screenshots/screen4.png) |
+**[Watch or download the 27-second gameplay preview with sound — MP4](https://github.com/olivierh59500/go-populous/raw/refs/heads/main/docs/media/preview.mp4)**
+
+The preview combines three passages from recorded desktop gameplay. The animated
+image is silent; the MP4 includes the game's soundtrack and sound effects.
+The [earlier full gameplay recording](screenshots/Populous%20remake%20go.webm)
+and original captures remain in [screenshots](screenshots).
 
 ## Features
 
@@ -36,13 +41,14 @@ The project recreates the original isometric world view, terrain sculpting, popu
 - Multiple terrain sets decoded from Amiga data: grass, desert, snow/ice, and rocky worlds.
 - Amiga-style graphics and audio decoding for screens, tiles, sprites, music, effects, and speech banks.
 
-## Requirements
+## Requirements and assets
 
 - Go 1.25 or newer.
 - A platform supported by Ebitengine.
-- Populous Amiga data files.
+- Populous Amiga data files, supplied under the checked-in `assets/amiga` directory.
 
-The loader searches for data in `assets/amiga` by default. You can also point it at another directory:
+The loader reads `assets/amiga` when available, then falls back to the data
+embedded in the executable. You can also point it at another directory:
 
 ```sh
 POPULOUS_AMIGA_DIR=/path/to/populous-amiga-data go run ./cmd/populous
@@ -56,7 +62,11 @@ POPULOUS_EXTRACTED_IMAGE_DIR=/path/to/extracted-images go run ./cmd/populous
 
 ## Running
 
+From a fresh checkout:
+
 ```sh
+git clone https://github.com/olivierh59500/go-populous.git
+cd go-populous
 go run ./cmd/populous
 ```
 
@@ -86,38 +96,31 @@ in the first five worlds. Campaign starts can therefore be asymmetric.
 The strategic AI is only used in the demo; normal games retain their original
 opponent. Victory is not guaranteed.
 
-The strategic AI expands connected flat areas for new castles, keeps useful
-existing elevations (including levels 3 and 4), and levels each settlement at
-its current altitude instead of spending mana on a prescribed flood plateau.
-It forecasts propagated terrain costs, abandons impossible hard-rock projects
-when construction is not restricted to existing towns, and repairs short soft
-obstacles. Impossible projects no longer monopolize its four-town shortlist.
-It can release settlers early by lowering a peripheral castle vertex, waiting
-for ordinary emigration and restoring the ground. Both edits cost normal mana;
-it does not use the historical computer's privileged early-emigration rule.
-It also fixes founding slopes ignored by the original AI and uses
-ordinary paid actions to rescue recoverable swimmers or truly blocked settlers.
-It can rally followers into mature knights, attack settlements and moving
-survivors with available spells, and reserve expensive volcanoes for dense
-targets. On high-attrition landscapes it founds endangered settlers first,
-lets small leaders grow in town and can recruit nearby populated towns through
-the ordinary paid magnet and merging rules. When knights and Armageddon are
-unavailable, a strong carrier follows paid waypoints along a safe land route;
-the controller wakes it again after merging into or capturing a settlement.
-Ready Armageddon, Flood and Knight powers
-cannot be postponed indefinitely by routine frontier work; immediate Knight
-priority is limited to the terrain economies where its complete A/B improved.
-At the front, it can deprive nearby enemy towns of farmland and build passages
-for its expeditions using ordinary paid terrain actions. In high-attrition
-worlds it can trade some peripheral farmland to stop a knight or, with a large
-population advantage, break a remaining enemy position. It must preserve
-friendly town centres and avoid drowning its followers. Each edit requires
-local construction presence, including when resuming a repair. Flood decisions
-forecast the actual submerged tiles on an independent terrain copy; they do
-not inspect future random outcomes or modify the live world while planning.
-On worlds where construction is forbidden, it switches to ordinary fighting
-after establishing four towns rather than waiting for a castle-based army.
-The implementation study and current 990-match results are in the
+The strategic AI builds connected flat areas at each settlement's existing
+altitude, including levels 3 and 4. It forecasts propagated terrain costs,
+abandons impossible hard-rock projects where construction rules permit, and
+repairs founding slopes and short obstacles. Blocked projects do not monopolize
+its four-town shortlist.
+
+Expansion uses ordinary paid actions: temporarily lowering and restoring a
+peripheral castle vertex releases settlers through normal emigration, and
+recoverable swimmers or blocked settlers can receive terrain repairs. It does
+not copy the historical computer's privileged early-emigration rule. On
+high-attrition worlds it founds endangered settlers first, grows small leaders
+in town, and recruits nearby towns through paid magnet and merging actions.
+
+For attacks, it rallies mature knights, targets settlements and moving survivors
+with available spells, and reserves expensive volcanoes for dense targets.
+When Knights and Armageddon are unavailable, a strong carrier follows paid
+waypoints along a safe land route. Ready endgame powers cannot be postponed
+indefinitely by routine frontier work. It can build passages or remove enemy
+farmland using local, paid terrain actions, while preserving friendly town
+centers and avoiding drowned followers. On worlds that forbid construction,
+it switches to ordinary fighting after establishing four towns.
+
+Flood forecasts use an independent terrain copy. Planning does not modify the
+live world or inspect future random outcomes. The implementation, terrain-specific
+tradeoffs, and current 990-match comparison are documented in the
 [strategic AI rework report](docs/AI_STRATEGIC_REWORK_2026-09-19.md).
 
 Normal playback continues until elimination or a 20-minute simulation limit,
@@ -161,16 +164,22 @@ files under `recordings/` are ignored by Git.
 
 The Android build embeds the required Populous data and uses a dedicated mobile
 game interface: a wide terrain view, compact minimap, large tool buttons and
-power panels. Desktop keeps its original presentation. With one authorized
-Android device connected over USB, build, install, and launch it with:
+power panels. Desktop keeps its original presentation.
+
+[![Android gameplay with a wide terrain view, compact minimap, and large touch tools](docs/media/android-controls.png)](docs/media/android-controls.png)
+
+With one authorized Android device connected over USB, build, install, and
+launch it with:
 
 ```sh
 ./scripts/run-android.sh
 ```
 
-The script pins Ebitengine/ebitenmobile, Gradle, the Android API, NDK, and the
-`arm64-v8a` ABI; it also verifies the APK signature and 16 KiB alignment before
-installation. To preview mobile controls on desktop:
+The script uses Ebitengine/ebitenmobile 2.9.11, Java 17, Gradle 8.11.1, SDK
+Platform 36, Build Tools 36.0.0, and NDK 28.2.13676358. It targets `arm64-v8a`
+and Android API 23 or newer, and verifies the APK signature and 16 KiB ZIP
+alignment before installation. Set `ANDROID_HOME` or `ANDROID_SDK_ROOT` and
+`JAVA_HOME` for your toolchain. To preview mobile controls on desktop:
 
 ```sh
 go run ./cmd/populous -mobile-ui -width 1212 -height 540
@@ -198,7 +207,9 @@ Evil with **JOIN**. The connection uses secure Bluetooth Classic RFCOMM and does
 not require Internet access. There is currently no reconnection or session
 resume after a lasting interruption. Permissions, pairing, privacy notes and
 the mandatory two-device test plan are in the
-[Android Bluetooth guide](docs/ANDROID_BLUETOOTH.md).
+[Android Bluetooth guide](docs/ANDROID_BLUETOOTH.md). That guide records
+single-device validation; a real two-device match remains part of the required
+test plan.
 
 ### Windows
 
@@ -216,6 +227,8 @@ The resulting executables are under `dist/windows/` and are explicitly included
 in Git. They are portable and unsigned, so Windows SmartScreen can warn on first
 launch. See the [Windows release instructions](docs/WINDOWS_RELEASE.md) for
 target details, integrity checks, limitations, and the real-Windows test plan.
+The release pipeline verifies executable structure and checksums; gameplay
+still needs validation on real Windows hardware.
 
 ### Multiplayer
 
@@ -311,7 +324,8 @@ The in-game icon panel also exposes movement, sound toggles, follower behavior, 
   preferences and construction-scope checks with headless tests.
 - `assets/amiga`: expected Amiga data-file location.
 - `assets/extracted-images`: optional decoded screen image fallback.
-- `screenshots`: screenshots and gameplay video used by this README.
+- `docs/media`: README screenshots, silent animated preview, and MP4 with sound.
+- `screenshots`: earlier captures and the original full gameplay recording.
 
 ## Development
 
@@ -344,7 +358,7 @@ state hashes, and its ordering is independent of the number of workers.
 The engine-3 parity corrections restore the original C++ landscape generation,
 legacy AI turn ordering, population and combat rules. Historical engine-2 AI
 results are not current performance claims. See the
-[implementation and validation report](docs/ENGINE_PARITY_FIXES_2026-09-19.md).
+[C++ comparison and validation notes](internal/populous/testdata/cpporacle/README.md).
 Existing saves remain readable; multiplayer rejects older simulation builds.
 
 When the original C++ project is available under `previous/DCPopulous-master`
@@ -368,8 +382,15 @@ go build ./cmd/populous
 On desktop, save/load writes `go-populous.sav` in the current working directory.
 On Android, the same file is stored in the application's private files directory.
 
-## Legal Notice
+## Credits and License
 
 This is an unofficial fan project and is not affiliated with Bullfrog Productions or Electronic Arts. Populous, related trademarks, and original game data belong to their respective rights holders.
 
-The source code is distributed under the GPL-3.0 license. Original game assets, if used, are not covered by that license unless you have separate rights to distribute them.
+Populous was created by Bullfrog Productions. The graphics, terrain and campaign
+data, music, effects, and speech used here come from the original Amiga game
+files. The Go remake decodes those files and uses Ebitengine for rendering,
+input, and audio.
+
+The source code is distributed under the [GPL-3.0 license](LICENSE). Original
+game assets are not covered by that license unless you have separate rights
+to distribute them.
