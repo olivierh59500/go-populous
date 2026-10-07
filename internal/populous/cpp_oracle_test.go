@@ -21,6 +21,7 @@ import (
 // This optional test runs original bodies, not a hand-translated reference.
 // See testdata/cpporacle/README.md for its deliberately limited coverage.
 func TestCPPOracleParity(t *testing.T) {
+	requireOriginalResources(t, "level.dat")
 	oracle := compileCPPOracle(t)
 	run := func(t *testing.T, mode, input string, count int) []string {
 		t.Helper()

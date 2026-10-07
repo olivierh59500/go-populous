@@ -60,6 +60,8 @@ else
     fail 'Missing SHA-256 tool: install shasum or sha256sum.'
 fi
 
+"$project_root/scripts/prepare-local-build-assets.sh"
+
 [ -f "$version_file" ] || fail 'Missing canonical VERSION file.'
 version=$(sed -n '1p' "$version_file")
 [ "$(wc -l < "$version_file" | awk '{print $1}')" -eq 1 ] || fail 'VERSION must contain exactly one line.'

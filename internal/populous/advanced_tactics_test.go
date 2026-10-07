@@ -352,6 +352,7 @@ func TestAdvancedNoBuildPolicyPreservesEconomyAndActionRules(t *testing.T) {
 }
 
 func TestAdvancedNoBuildCampaignRulesAndSnapshot(t *testing.T) {
+	requireOriginalResources(t, "level.dat", "land0")
 	f, err := os.Open("../../assets/amiga/level.dat")
 	if err != nil {
 		t.Fatal(err)
@@ -410,6 +411,7 @@ func TestAdvancedTacticsCampaignPanel(t *testing.T) {
 	if os.Getenv("POPULOUS_TACTICS_PANEL") == "" {
 		t.Skip("set POPULOUS_TACTICS_PANEL=1 to measure the 19-profile strategy panel")
 	}
+	requireOriginalResources(t, "level.dat", "land0", "land1", "land2", "land3")
 	f, err := os.Open("../../assets/amiga/level.dat")
 	if err != nil {
 		t.Fatal(err)

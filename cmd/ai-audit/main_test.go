@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -79,6 +80,9 @@ func TestEliminationExcludesRuinsAndPopulationAdvantages(t *testing.T) {
 func TestAuditDeterministicAcrossWorkers(t *testing.T) {
 	bundle, err := assets.LoadEmbedded()
 	if err != nil {
+		if errors.Is(err, assets.ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	matches := []match{{bundle.Levels[200], 1}, {bundle.Levels[0], 0}, {bundle.Levels[200], 0}, {bundle.Levels[10], 0}}

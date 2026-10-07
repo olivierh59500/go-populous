@@ -7,6 +7,7 @@ import (
 )
 
 func TestAdvancedComputerWinsCampaignBattle(t *testing.T) {
+	requireOriginalResources(t, "level.dat", "land0", "land1", "land2", "land3")
 	f, err := os.Open("../../assets/amiga/level.dat")
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +57,7 @@ func TestAdvancedCampaignTournament(t *testing.T) {
 	if os.Getenv("POPULOUS_AI_TOURNAMENT") == "" {
 		t.Skip("set POPULOUS_AI_TOURNAMENT=1 to run the campaign tournament")
 	}
+	requireOriginalResources(t, "level.dat", "land0", "land1", "land2", "land3")
 	f, err := os.Open("../../assets/amiga/level.dat")
 	if err != nil {
 		t.Fatal(err)

@@ -1,12 +1,15 @@
 package assets
 
 import (
+	"errors"
 	"image"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"go-populous/internal/populous"
 )
@@ -14,7 +17,10 @@ import (
 func TestLoadWithLocalDump(t *testing.T) {
 	bundle, err := Load()
 	if err != nil {
-		t.Skip(err)
+		if errors.Is(err, ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
+		t.Fatal(err)
 	}
 	assertCompleteBundle(t, bundle)
 }
@@ -22,6 +28,9 @@ func TestLoadWithLocalDump(t *testing.T) {
 func TestLoadEmbedded(t *testing.T) {
 	bundle, err := LoadEmbedded()
 	if err != nil {
+		if errors.Is(err, ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	assertCompleteBundle(t, bundle)
@@ -51,6 +60,9 @@ func TestLoadFallsBackToEmbeddedOutsideRepository(t *testing.T) {
 
 	bundle, err := Load()
 	if err != nil {
+		if errors.Is(err, ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	assertCompleteBundle(t, bundle)
@@ -62,6 +74,17 @@ func TestLoadFSRejectsMissingAmigaDirectory(t *testing.T) {
 	}
 	if _, err := LoadFS(emptyFS{}); err == nil {
 		t.Fatal("LoadFS accepted a filesystem without amiga")
+	}
+}
+
+func TestLoadFSReportsHowToImportMissingResources(t *testing.T) {
+	files := fstest.MapFS{"amiga/LOCAL_RESOURCES.txt": {Data: []byte("local resources")}}
+	_, err := LoadFS(files)
+	if !errors.Is(err, ErrAssetsUnavailable) {
+		t.Fatalf("missing resources returned %v, want ErrAssetsUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "scripts/prepare-assets.sh") || !strings.Contains(err.Error(), "docs/ASSET_SETUP.md") {
+		t.Fatalf("missing resources have no setup instructions: %v", err)
 	}
 }
 
@@ -138,12 +161,18 @@ func assertPremultipliedTransparent(t *testing.T, rgba *image.RGBA) {
 func TestAmigaScreenDecodeMatchesExtractedQaz(t *testing.T) {
 	bundle, err := Load()
 	if err != nil {
-		t.Skip(err)
+		if errors.Is(err, ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
+		t.Fatal(err)
 	}
 	refPath := filepath.Join(bundle.ExtractedDir, "qaz.pic.png")
 	ref, err := loadPNG(os.DirFS(filepath.Dir(refPath)), filepath.Base(refPath))
 	if err != nil {
-		t.Skip(err)
+		if errors.Is(err, fs.ErrNotExist) {
+			t.Skip(err)
+		}
+		t.Fatal(err)
 	}
 	got := bundle.Screens["qaz"]
 	if got == nil {
@@ -170,17 +199,59 @@ func TestAmigaScreenDecodeMatchesExtractedQaz(t *testing.T) {
 
 func TestEmbeddedScreensMatchDesktopScreens(t *testing.T) {
 	desktop, err := Load()
-	if err != nil || desktop.ExtractedDir == "" {
-		t.Skipf("desktop reference images unavailable: %v", err)
+	if errors.Is(err, ErrAssetsUnavailable) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	embedded, err := LoadEmbedded()
 	if err != nil {
+		if errors.Is(err, ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	for _, name := range []string{"qaz", "demo", "lord", "load"} {
 		if !reflect.DeepEqual(embedded.Screens[name], desktop.Screens[name]) {
 			t.Errorf("embedded screen %q differs from desktop screen", name)
 		}
+	}
+}
+
+func TestOriginalScreensReconstructReferencePixels(t *testing.T) {
+	amigaDir := resolveDir("POPULOUS_AMIGA_DIR", "assets/amiga")
+	referenceDir := resolveDir("POPULOUS_EXTRACTED_IMAGE_DIR", "assets/extracted-images")
+	if amigaDir == "" || referenceDir == "" {
+		t.Skip("local original pictures and reference PNGs are unavailable")
+	}
+	for _, name := range []string{"demo", "load", "lord", "qaz"} {
+		for _, path := range []string{filepath.Join(amigaDir, name+".pic"), filepath.Join(referenceDir, name+".pic.png")} {
+			if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+				t.Skipf("local picture reference is unavailable: %s", path)
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	outputDir := t.TempDir()
+	if err := ExportScreenImages(amigaDir, outputDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"demo", "load", "lord", "qaz"} {
+		t.Run(name, func(t *testing.T) {
+			got, err := loadPNG(os.DirFS(outputDir), name+".pic.png")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := loadPNG(os.DirFS(referenceDir), name+".pic.png")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("reconstructed %s pixels differ from the existing reference PNG", name)
+			}
+		})
 	}
 }
 

@@ -1,9 +1,43 @@
 package populous
 
 import (
+	"encoding/binary"
 	"image"
 	"testing"
 )
+
+func TestDecodeAmigaPictureTrailingPalettes(t *testing.T) {
+	for _, planes := range []int{4, 5} {
+		data := make([]byte, planes+(1<<planes)*2)
+		data[0] = 0x80
+		data[planes-1] = 0x80
+		index := 1 | 1<<(planes-1)
+		binary.BigEndian.PutUint16(data[planes+index*2:], 0x123)
+		img, err := DecodeAmigaPicture(data, 8, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := img.RGBAAt(0, 0); got.R != 17 || got.G != 34 || got.B != 51 || got.A != 255 {
+			t.Fatalf("%d planes: decoded pixel = %#v, want palette entry %d", planes, got, index)
+		}
+		if got := img.RGBAAt(1, 0); got.R != 0 || got.G != 0 || got.B != 0 || got.A != 255 {
+			t.Fatalf("%d planes: blank pixel = %#v", planes, got)
+		}
+	}
+}
+
+func TestDecodeAmigaPictureRejectsInvalidStructure(t *testing.T) {
+	for _, data := range [][]byte{nil, make([]byte, 5), make([]byte, 4+31)} {
+		if _, err := DecodeAmigaPicture(data, 8, 1); err == nil {
+			t.Fatalf("accepted unsupported picture size %d", len(data))
+		}
+	}
+	data := make([]byte, 4+32)
+	data[4] = 0xf0
+	if _, err := DecodeAmigaPicture(data, 8, 1); err == nil {
+		t.Fatal("accepted invalid 12-bit palette")
+	}
+}
 
 func TestCursorSpriteMatchesOriginalPlacementPointers(t *testing.T) {
 	tests := []struct {

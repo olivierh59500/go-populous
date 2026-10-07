@@ -1,6 +1,7 @@
 package assets
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -11,6 +12,27 @@ import (
 	embeddedassets "go-populous/assets"
 	"go-populous/internal/populous"
 )
+
+// ErrAssetsUnavailable identifies a checkout or executable without imported
+// game data. Corrupt files return their decoding error instead of this error.
+var ErrAssetsUnavailable = errors.New("original Populous resources are unavailable")
+
+var requiredFiles = [...]string{
+	"demo.pic", "gmusic1", "gwords", "land0", "land1", "land2", "land3",
+	"level.dat", "load.pic", "lord.pic", "mouths.pic", "qaz.pic",
+	"spr_320.dat", "sprites0.dat",
+}
+
+// MissingAssetError records the first absent resource and how to import it.
+type MissingAssetError struct {
+	Name string
+}
+
+func (e *MissingAssetError) Error() string {
+	return fmt.Sprintf("%v: %s. Run scripts/prepare-assets.sh with your original Populous ADF before building; see docs/ASSET_SETUP.md", ErrAssetsUnavailable, e.Name)
+}
+
+func (e *MissingAssetError) Unwrap() error { return ErrAssetsUnavailable }
 
 type Bundle struct {
 	AmigaDir     string
@@ -55,9 +77,8 @@ func LoadEmbedded() (*Bundle, error) {
 }
 
 // LoadFS reads a bundle from an fs.FS whose canonical data is rooted at
-// "amiga". An optional "extracted-images" directory supplies PNG fallbacks
-// for screen dumps that contain additional non-planar data. The embedded
-// source includes only the two fallbacks needed by the checked-in Amiga data.
+// "amiga". Original screen data is decoded directly, including the trailing
+// palettes in lord.pic and load.pic. Generated PNGs are not runtime fallbacks.
 func LoadFS(files fs.FS) (*Bundle, error) {
 	if files == nil {
 		return nil, fmt.Errorf("nil asset filesystem")
@@ -67,7 +88,7 @@ func LoadFS(files fs.FS) (*Bundle, error) {
 		if err == nil {
 			err = fmt.Errorf("not a directory")
 		}
-		return nil, fmt.Errorf("missing Amiga data directory in asset filesystem: %w", err)
+		return nil, &MissingAssetError{Name: "amiga/"}
 	}
 	amigaFS, err := fs.Sub(files, "amiga")
 	if err != nil {
@@ -83,6 +104,14 @@ func LoadFS(files fs.FS) (*Bundle, error) {
 func loadBundle(amigaFS, extractedFS fs.FS, amigaDir, extractedDir string) (*Bundle, error) {
 	if amigaFS == nil {
 		return nil, fmt.Errorf("nil Amiga asset filesystem")
+	}
+	for _, name := range requiredFiles {
+		if _, err := fs.Stat(amigaFS, name); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, &MissingAssetError{Name: "amiga/" + name}
+			}
+			return nil, fmt.Errorf("resource %s: %w", name, err)
+		}
 	}
 	b := &Bundle{
 		AmigaDir:     amigaDir,
@@ -121,15 +150,7 @@ func (b *Bundle) loadScreen(name string) (*image.RGBA, error) {
 	if err != nil {
 		return nil, fmt.Errorf("screen %s: %w", name, err)
 	}
-	if len(data) == populous.ScreenWidth*populous.ScreenHeight/2 {
-		return populous.DecodeAmigaScreen4BPP(data, populous.ScreenWidth, populous.ScreenHeight, 0)
-	}
-	if b.extractedFS != nil {
-		if img, err := loadPNG(b.extractedFS, name+".pic.png"); err == nil {
-			return img, nil
-		}
-	}
-	return populous.DecodeAmigaScreen4BPP(data, populous.ScreenWidth, populous.ScreenHeight, 0)
+	return populous.DecodeAmigaPicture(data, populous.ScreenWidth, populous.ScreenHeight)
 }
 
 func (b *Bundle) loadPlanarAssets() error {

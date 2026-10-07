@@ -1,0 +1,4 @@
+Screen PNGs are generated locally from the imported Amiga picture files.
+
+Run go run ./cmd/export-images -amiga assets/amiga -out assets/extracted-images.
+Generated images are excluded from Git and are not required to decode the game.

@@ -2,6 +2,7 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+"$project_root/scripts/prepare-local-build-assets.sh"
 android_sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
 java_home_path=${JAVA_HOME:-}
 ebiten_version=v2.9.11

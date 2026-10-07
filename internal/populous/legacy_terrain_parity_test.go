@@ -15,6 +15,7 @@ import (
 // increments seed afterwards. No original sources or C++ compiler are needed
 // to run this regression test, including when previous/ is not distributed.
 func TestLegacyTerrainCampaignMatchesOriginalCppFingerprint(t *testing.T) {
+	requireOriginalResources(t, "level.dat")
 	f, err := os.Open("../../assets/amiga/level.dat")
 	if err != nil {
 		t.Fatal(err)

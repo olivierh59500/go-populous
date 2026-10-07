@@ -1,6 +1,7 @@
 package attract
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -27,6 +28,9 @@ func TestObserveCampaignDemos(t *testing.T) {
 	}
 	bundle, err := assets.LoadEmbedded()
 	if err != nil {
+		if errors.Is(err, assets.ErrAssetsUnavailable) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	for _, item := range strings.Split(selection, ",") {

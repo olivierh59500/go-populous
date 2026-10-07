@@ -35,6 +35,8 @@ dist_dir="$project_root/dist/android"
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
+"$project_root/scripts/prepare-local-build-assets.sh"
+
 if [ -z "$android_sdk" ] && [ -d /opt/homebrew/share/android-commandlinetools ]; then
     android_sdk=/opt/homebrew/share/android-commandlinetools
 fi

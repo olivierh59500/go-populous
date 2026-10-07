@@ -45,7 +45,18 @@ and original captures remain in [screenshots](screenshots).
 
 - Go 1.25 or newer.
 - A platform supported by Ebitengine.
-- Populous Amiga data files, supplied under the checked-in `assets/amiga` directory.
+- A compatible original Populous Amiga disk image, supplied separately.
+
+Original game data and generated releases are excluded from Git. The included
+Go importer extracts the 15 required resource files from a user-supplied ADF,
+verifies their fingerprints and recreates the screen images and launcher icons.
+It does not execute or import the original Amiga program.
+
+The [Planet Emu Amiga ADF catalogue, letter P](https://www.planetemu.net/roms/commodore-amiga-games-adf?page=P)
+can help identify **Populous v2.7 (1989-03-17), Electronic Arts**, the main
+single-disk game. The Promised Lands, Final Frontier and Populous II are
+different releases. Supported resource fingerprints and the full import
+procedure are documented in [Preparing original game data](docs/ASSET_SETUP.md).
 
 The loader reads `assets/amiga` when available, then falls back to the data
 embedded in the executable. You can also point it at another directory:
@@ -54,7 +65,7 @@ embedded in the executable. You can also point it at another directory:
 POPULOUS_AMIGA_DIR=/path/to/populous-amiga-data go run ./cmd/populous
 ```
 
-Optional extracted screen PNGs can be provided with:
+Locally generated screen PNGs can be provided with:
 
 ```sh
 POPULOUS_EXTRACTED_IMAGE_DIR=/path/to/extracted-images go run ./cmd/populous
@@ -67,8 +78,15 @@ From a fresh checkout:
 ```sh
 git clone https://github.com/olivierh59500/go-populous.git
 cd go-populous
+sh tools/exclude-local-assets.sh
+./scripts/prepare-assets.sh -adf "/path/to/Populous.adf"
 go run ./cmd/populous
 ```
+
+Preparation runs the importer, resource verification, screen exporter and icon
+generator. To validate an existing local installation, run
+`go run ./cmd/import-assets -verify`. A clean checkout can compile the sources
+without original resources; launching the game requires the prepared data.
 
 The game opens a 960x720 window and renders internally at the original 320x240 logical resolution.
 
@@ -162,14 +180,14 @@ files under `recordings/` are ignored by Git.
 
 ### Android / Pixel
 
-The Android build embeds the required Populous data and uses a dedicated mobile
-game interface: a wide terrain view, compact minimap, large tool buttons and
+The Android build embeds the locally imported Populous data and uses a dedicated
+mobile game interface: a wide terrain view, compact minimap, large tool buttons and
 power panels. Desktop keeps its original presentation.
 
 [![Android gameplay with a wide terrain view, compact minimap, and large touch tools](docs/media/android-controls.png)](docs/media/android-controls.png)
 
-With one authorized Android device connected over USB, build, install, and
-launch it with:
+After preparing the assets, connect one authorized Android device over USB,
+then build, install and launch with:
 
 ```sh
 ./scripts/run-android.sh
@@ -223,8 +241,8 @@ files and their SHA-256 checksums with:
 ./scripts/build-windows-release.sh
 ```
 
-The resulting executables are under `dist/windows/` and are explicitly included
-in Git. They are portable and unsigned, so Windows SmartScreen can warn on first
+The resulting executables remain locally under `dist/windows/` and are excluded
+from Git. They are portable and unsigned, so Windows SmartScreen can warn on first
 launch. See the [Windows release instructions](docs/WINDOWS_RELEASE.md) for
 target details, integrity checks, limitations, and the real-Windows test plan.
 The release pipeline verifies executable structure and checksums; gameplay
@@ -320,10 +338,16 @@ The in-game icon panel also exposes movement, sound toggles, follower behavior, 
 - `internal/recording`: direct game-audio mixing and frame-by-frame MP4 export through FFmpeg.
 - `internal/populous`: world simulation, terrain generation, AI, powers, battles, snapshots, graphics decoding, and sound decoding.
 - `internal/assets`: asset discovery and loading.
+- `internal/amigados`: AmigaDOS disk-image reader used by the importer.
+- `internal/assetimport`: supported resource fingerprints and checked import.
+- `cmd/import-assets`: local ADF extraction and resource verification.
+- `cmd/export-images`: original screen bitplane and palette decoding to PNG.
+- `scripts/prepare-assets.sh`: import, verification, screen export and icon generation.
+- `tools/exclude-local-assets.sh`: local Git exclusions for original and generated resources.
 - `internal/mobileui`: pure gesture recognition, mobile layout, projection,
   preferences and construction-scope checks with headless tests.
-- `assets/amiga`: expected Amiga data-file location.
-- `assets/extracted-images`: optional decoded screen image fallback.
+- `assets/amiga`: locally imported resource directory, excluded from Git.
+- `assets/extracted-images`: locally generated screen images, excluded from Git.
 - `docs/media`: README screenshots, silent animated preview, and MP4 with sound.
 - `screenshots`: earlier captures and the original full gameplay recording.
 
@@ -392,5 +416,6 @@ files. The Go remake decodes those files and uses Ebitengine for rendering,
 input, and audio.
 
 The source code is distributed under the [GPL-3.0 license](LICENSE). Original
-game assets are not covered by that license unless you have separate rights
-to distribute them.
+game assets are supplied separately and are not covered by that license. Local
+standalone builds embed the data prepared by their builder; the source-code
+license does not grant permission to redistribute the original resources.

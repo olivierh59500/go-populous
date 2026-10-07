@@ -1,12 +1,57 @@
 package populous
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 )
+
+// DecodeAmigaPicture decodes the raw Populous screens. Standard gameplay and
+// intro backgrounds use four planes and the game palette; the lord and title
+// pictures append their own 16- or 32-colour palette after four or five planes.
+func DecodeAmigaPicture(data []byte, width, height int) (*image.RGBA, error) {
+	if width <= 0 || height <= 0 || width%8 != 0 {
+		return nil, fmt.Errorf("invalid Amiga picture dimensions %dx%d", width, height)
+	}
+	planeSize := (width / 8) * height
+	planes := 4
+	var palette []color.RGBA
+	switch len(data) {
+	case planeSize * 4:
+		return DecodeAmigaScreen4BPP(data, width, height, 0)
+	case planeSize*4 + 32:
+		palette = make([]color.RGBA, 16)
+	case planeSize*5 + 64:
+		planes = 5
+		palette = make([]color.RGBA, 32)
+	default:
+		return nil, fmt.Errorf("unsupported Amiga picture size %d for %dx%d", len(data), width, height)
+	}
+	paletteData := data[planeSize*planes:]
+	for i := range palette {
+		value := binary.BigEndian.Uint16(paletteData[2*i:])
+		if value&0xf000 != 0 {
+			return nil, fmt.Errorf("invalid Amiga picture palette colour %d: %#04x", i, value)
+		}
+		r, g, b := uint8(value>>8)&15, uint8(value>>4)&15, uint8(value)&15
+		palette[i] = color.RGBA{R: r * 17, G: g * 17, B: b * 17, A: 255}
+	}
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	rowBytes := width / 8
+	for y := range height {
+		for x := range width {
+			index := 0
+			for plane := range planes {
+				index |= int((data[plane*planeSize+y*rowBytes+x/8]>>(7-uint(x%8)))&1) << plane
+			}
+			writeRGBAPixel(img, y*img.Stride+4*x, palette[index])
+		}
+	}
+	return img, nil
+}
 
 const (
 	ScreenWidth     = 320

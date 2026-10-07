@@ -9,9 +9,17 @@ executables from the same source and embedded game data:
 | `x64` | `windows/amd64`, `GOAMD64=v1` | 64-bit Windows 10/11 on Intel/AMD |
 | `arm64` | `windows/arm64`, `GOARM64=v8.0` | Windows 10/11 on ARM64 |
 
-Run the following command at the repository root:
+Prepare the original resources from a compatible Amiga disk before building.
+The repository includes the extraction tools and resource configuration;
+original artwork and compiled executables remain local. See
+[Preparing original game data](ASSET_SETUP.md) for supported disk identification
+and external data installations.
+
+Run the following commands at the repository root:
 
 ```sh
+sh tools/exclude-local-assets.sh
+./scripts/prepare-assets.sh -adf "/path/to/Populous.adf"
 ./scripts/build-windows-release.sh
 ```
 
@@ -19,10 +27,10 @@ The first invocation may download the pinned
 `github.com/tc-hib/go-winres@v0.3.3` resource generator through the Go module
 proxy. The build itself uses `CGO_ENABLED=0`; no Windows compiler, SDK, Wine, or
 virtual machine is required. `VERSION` is the canonical release name and the
-resource metadata in `build/windows/winres.json` must match it. When publishing
-a new version, also replace the three exact Windows executable allow-list
-entries in `.gitignore`; older and intermediate binaries intentionally remain
-ignored.
+resource metadata in `build/windows/winres.json` must match it. Generated
+launcher PNGs, temporary resource files and the entire `dist/` directory are
+excluded from Git by the local exclusion helper. The script checks the imported
+resources and generates the icons before compiling.
 
 ## Published files
 
@@ -36,6 +44,10 @@ populous-windows-arm64-1.1.0.exe
 SHA256SUMS
 RELEASE.txt
 ```
+
+These outputs are local build products. They are not committed with the source
+repository. The scripts retain existing local releases when preparing a new
+build; removing a release from Git does not delete the builder's local copy.
 
 The executables use the Windows GUI subsystem, so opening one does not create a
 second console window. They contain the application icon, a Windows 10
@@ -85,7 +97,7 @@ graphics, sound, input, save/load, TCP multiplayer, and display scaling must
 still be smoke-tested on real Windows systems for each architecture before a
 public release.
 
-The 20 September 2026 rebuild retains version `1.1.0` and the tracked filenames,
+The 20 September 2026 rebuild retains version `1.1.0` and the release filenames,
 but includes the current strategic AI. All three targets passed the structural
 and checksum checks above. Their common network source fingerprint is
 `c3dfe61306ee299cf36b60e2cf6c1699d4779cb0c69d97a9866e41f2e077c876`.

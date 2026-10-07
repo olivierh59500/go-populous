@@ -1,6 +1,8 @@
 package attract
 
 import (
+	"errors"
+	"io/fs"
 	"testing"
 
 	embeddedassets "go-populous/assets"
@@ -11,6 +13,9 @@ func campaignLevels(t *testing.T) []populous.Level {
 	t.Helper()
 	file, err := embeddedassets.Files.Open("amiga/level.dat")
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			t.Skip("original campaign data is not imported; see docs/ASSET_SETUP.md")
+		}
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { file.Close() })
