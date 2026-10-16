@@ -1,0 +1,5 @@
+Original Populous resources belong here after local import.
+
+Run scripts/prepare-assets.sh with your original Amiga ADF.
+See docs/ASSET_SETUP.md for the supported files and setup instructions.
+Only this text file is distributed with the source repository.
